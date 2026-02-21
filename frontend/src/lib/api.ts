@@ -128,6 +128,15 @@ export async function publishAgent(agentData: {
   return data
 }
 
+// ---- Reviewer Findings ----
+
+export async function getReviewerFindings(projectId: string): Promise<RiskSignal[]> {
+  const { data } = await apiClient.get<RiskSignal[]>('/risks', {
+    params: { project_id: projectId, source: 'reviewer' },
+  })
+  return data
+}
+
 // ---- Teams ----
 
 export async function getTeams(): Promise<Team[]> {

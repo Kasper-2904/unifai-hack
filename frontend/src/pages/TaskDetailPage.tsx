@@ -298,7 +298,15 @@ export default function TaskDetailPage() {
             {plans && plans.length > 0 && (
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Plan</CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base">Plan</CardTitle>
+                    <Link
+                      to="/context"
+                      className="text-xs text-sky-600 hover:underline"
+                    >
+                      View OA Rationale
+                    </Link>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {plans.map((plan) => (

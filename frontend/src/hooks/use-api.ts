@@ -13,6 +13,7 @@ import {
   getMarketplaceCatalog,
   getPlans,
   getProject,
+  getReviewerFindings,
   getRiskSignals,
   getSubtasks,
   getTask,
@@ -95,6 +96,14 @@ export function useMarketplaceAgent(id: string) {
     queryKey: ["marketplaceAgent", id],
     queryFn: () => getMarketplaceAgent(id),
     enabled: !!id,
+  });
+}
+
+export function useReviewerFindings(projectId: string) {
+  return useQuery({
+    queryKey: ["reviewerFindings", projectId],
+    queryFn: () => getReviewerFindings(projectId),
+    enabled: !!projectId,
   });
 }
 

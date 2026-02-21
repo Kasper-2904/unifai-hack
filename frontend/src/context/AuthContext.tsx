@@ -1,13 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { loginUser, registerUser } from '@/lib/authApi'
+import { getCurrentUser, loginUser, registerUser } from '@/lib/authApi'
 import { setAuthHeader, toApiErrorMessage } from '@/lib/apiClient'
 import { authStorage } from '@/lib/authStorage'
-import type { LoginRequest, RegisterRequest } from '@/types/auth'
+import type { LoginRequest, RegisterRequest, UserResponse } from '@/types/auth'
 
 interface AuthContextValue {
   token: string | null
   isAuthenticated: boolean
   isHydrating: boolean
+  user: UserResponse | null
   login: (payload: LoginRequest) => Promise<void>
   register: (payload: RegisterRequest) => Promise<void>
   logout: () => void
@@ -17,10 +18,21 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(() => authStorage.getToken())
+  const [user, setUser] = useState<UserResponse | null>(null)
   const isHydrating = false
 
   useEffect(() => {
     setAuthHeader(token)
+  }, [token])
+
+  // Fetch user profile when token is available
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    getCurrentUser()
+      .then((data) => { if (!cancelled) setUser(data) })
+      .catch(() => { if (!cancelled) setUser(null) })
+    return () => { cancelled = true }
   }, [token])
 
   const login = useCallback(async (payload: LoginRequest) => {
@@ -44,6 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(() => {
     setToken(null)
+    setUser(null)
     setAuthHeader(null)
     authStorage.clearToken()
   }, [])
@@ -53,11 +66,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       token,
       isAuthenticated: Boolean(token),
       isHydrating,
+      user,
       login,
       register,
       logout,
     }),
-    [token, isHydrating, login, register, logout],
+    [token, user, isHydrating, login, register, logout],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

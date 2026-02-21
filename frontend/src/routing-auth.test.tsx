@@ -13,6 +13,7 @@ import { RegisterPage } from '@/pages/RegisterPage'
 vi.mock('@/lib/authApi', () => ({
   loginUser: vi.fn(),
   registerUser: vi.fn(),
+  getCurrentUser: vi.fn().mockRejectedValue(new Error('not authenticated')),
 }))
 
 function renderAuthApp(initialEntries: string[]) {

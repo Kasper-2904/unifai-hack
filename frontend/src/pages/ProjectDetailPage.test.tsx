@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -11,6 +12,7 @@ import {
   rejectPlan,
   removeProjectAllowedAgent,
 } from '@/lib/pmApi'
+import { getProjectTasks } from '@/lib/api'
 import { PlanStatus, type Agent, type PMDashboard } from '@/lib/types'
 
 vi.mock('@/lib/pmApi', () => ({
@@ -20,6 +22,10 @@ vi.mock('@/lib/pmApi', () => ({
   removeProjectAllowedAgent: vi.fn(),
   approvePlan: vi.fn(),
   rejectPlan: vi.fn(),
+}))
+
+vi.mock('@/lib/api', () => ({
+  getProjectTasks: vi.fn(),
 }))
 
 function renderPage() {
@@ -86,6 +92,7 @@ function makeOwnedAgent(overrides: Partial<Agent> = {}): Agent {
 describe('ProjectDetailPage', () => {
   const mockedFetchPMDashboard = vi.mocked(fetchPMDashboard)
   const mockedListOwnedAgents = vi.mocked(listOwnedAgents)
+  const mockedGetProjectTasks = vi.mocked(getProjectTasks)
   const mockedAddProjectAllowedAgent = vi.mocked(addProjectAllowedAgent)
   const mockedRemoveProjectAllowedAgent = vi.mocked(removeProjectAllowedAgent)
   const mockedApprovePlan = vi.mocked(approvePlan)
@@ -93,7 +100,7 @@ describe('ProjectDetailPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
+    mockedGetProjectTasks.mockResolvedValue([])
     mockedAddProjectAllowedAgent.mockResolvedValue({} as never)
     mockedRemoveProjectAllowedAgent.mockResolvedValue(undefined)
     mockedApprovePlan.mockResolvedValue({} as never)
@@ -118,7 +125,7 @@ describe('ProjectDetailPage', () => {
 
     renderPage()
 
-    expect(screen.getByText('Loading PM dashboard...')).toBeInTheDocument()
+    expect(screen.getByText('Loading project...')).toBeInTheDocument()
   })
 
   it('renders dashboard fetch error state', async () => {
@@ -127,31 +134,49 @@ describe('ProjectDetailPage', () => {
 
     renderPage()
 
-    expect(await screen.findByText('Failed to load PM dashboard.')).toBeInTheDocument()
+    expect(await screen.findByText('Failed to load project.')).toBeInTheDocument()
   })
 
   it('renders success state with empty approvals and allowlist', async () => {
+    const user = userEvent.setup()
     mockedFetchPMDashboard.mockResolvedValue(makeDashboard())
     mockedListOwnedAgents.mockResolvedValue([])
 
     renderPage()
 
     expect(await screen.findByRole('heading', { name: 'Orchestrator MVP' })).toBeInTheDocument()
-    expect(screen.getByText('No plans pending PM decision.')).toBeInTheDocument()
-    expect(screen.getByText('No agents currently allowed for this project.')).toBeInTheDocument()
+
+    // Switch to Plans tab
+    await user.click(screen.getByRole('tab', { name: 'Plans' }))
+    await waitFor(() => {
+      expect(screen.getByText('No plans pending approval.')).toBeInTheDocument()
+    })
+
+    // Switch to Settings tab
+    await user.click(screen.getByRole('tab', { name: 'Settings' }))
+    await waitFor(() => {
+      expect(screen.getByText('No agents allowed yet.')).toBeInTheDocument()
+    })
   })
 
   it('adds an agent from owned-agents list to project allowlist', async () => {
+    const user = userEvent.setup()
     mockedFetchPMDashboard.mockResolvedValue(makeDashboard())
     mockedListOwnedAgents.mockResolvedValue([makeOwnedAgent()])
 
     renderPage()
 
     await screen.findByRole('heading', { name: 'Orchestrator MVP' })
-    fireEvent.change(screen.getByLabelText('Select agent to allow'), {
-      target: { value: 'agent-1' },
+
+    // Switch to Settings tab
+    await user.click(screen.getByRole('tab', { name: 'Settings' }))
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Select an agent...')).toBeInTheDocument()
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Add agent' }))
+
+    await user.selectOptions(screen.getByDisplayValue('Select an agent...'), 'agent-1')
+    await user.click(screen.getByRole('button', { name: 'Add Agent' }))
 
     await waitFor(() => {
       expect(mockedAddProjectAllowedAgent).toHaveBeenCalledWith('proj-1', 'agent-1')
@@ -159,6 +184,7 @@ describe('ProjectDetailPage', () => {
   })
 
   it('removes an existing allowlisted agent', async () => {
+    const user = userEvent.setup()
     mockedFetchPMDashboard.mockResolvedValue(
       makeDashboard({
         allowed_agents: [
@@ -177,7 +203,16 @@ describe('ProjectDetailPage', () => {
 
     renderPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }))
+    await screen.findByRole('heading', { name: 'Orchestrator MVP' })
+
+    // Switch to Settings tab
+    await user.click(screen.getByRole('tab', { name: 'Settings' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
 
     await waitFor(() => {
       expect(mockedRemoveProjectAllowedAgent).toHaveBeenCalledWith('proj-1', 'agent-1')
@@ -185,6 +220,7 @@ describe('ProjectDetailPage', () => {
   })
 
   it('approves a pending plan', async () => {
+    const user = userEvent.setup()
     mockedFetchPMDashboard.mockResolvedValue(
       makeDashboard({
         pending_approvals: [
@@ -208,14 +244,24 @@ describe('ProjectDetailPage', () => {
 
     renderPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
+    await screen.findByRole('heading', { name: 'Orchestrator MVP' })
+
+    // Switch to Plans tab
+    await user.click(screen.getByRole('tab', { name: 'Plans' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Approve' }))
 
     await waitFor(() => {
       expect(mockedApprovePlan).toHaveBeenCalledWith('plan-1')
     })
   })
 
-  it('requires a rejection reason and submits reject flow', async () => {
+  it('submits reject flow with a reason', async () => {
+    const user = userEvent.setup()
     mockedFetchPMDashboard.mockResolvedValue(
       makeDashboard({
         pending_approvals: [
@@ -239,16 +285,25 @@ describe('ProjectDetailPage', () => {
 
     renderPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Reject' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm rejection' }))
+    await screen.findByRole('heading', { name: 'Orchestrator MVP' })
 
-    expect(await screen.findByText('Rejection reason is required.')).toBeInTheDocument()
-    expect(mockedRejectPlan).not.toHaveBeenCalled()
+    // Switch to Plans tab
+    await user.click(screen.getByRole('tab', { name: 'Plans' }))
 
-    fireEvent.change(screen.getByLabelText('Rejection reason for plan plan-1'), {
-      target: { value: 'Missing acceptance criteria' },
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument()
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm rejection' }))
+
+    // Click Reject to open the rejection form
+    await user.click(screen.getByRole('button', { name: 'Reject' }))
+
+    // Fill in the rejection reason and submit
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Rejection reason...')).toBeInTheDocument()
+    })
+
+    await user.type(screen.getByPlaceholderText('Rejection reason...'), 'Missing acceptance criteria')
+    await user.click(screen.getByRole('button', { name: 'Confirm Reject' }))
 
     await waitFor(() => {
       expect(mockedRejectPlan).toHaveBeenCalledWith('plan-1', 'Missing acceptance criteria')

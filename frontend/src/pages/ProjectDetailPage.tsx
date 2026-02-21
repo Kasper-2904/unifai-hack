@@ -81,7 +81,7 @@ export default function ProjectDetailPage() {
 
   const approvePlanMutation = useMutation({
     mutationFn: (planId: string) => approvePlan(planId),
-    onSuccess: (plan) => {
+    onSuccess: () => {
       setActionMessage(`Plan approved.`)
       void queryClient.invalidateQueries({ queryKey: ['pm-dashboard', projectId] })
     },

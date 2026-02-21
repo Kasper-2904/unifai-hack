@@ -1,8 +1,44 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import MarketplacePage from "./MarketplacePage";
+import { getMarketplaceCatalog } from "@/lib/api";
+import type { MarketplaceAgent } from "@/lib/types";
+
+vi.mock("@/lib/api", () => ({
+  getMarketplaceCatalog: vi.fn(),
+  publishAgent: vi.fn(),
+}));
+
+const mockAgents: MarketplaceAgent[] = [
+  {
+    id: "mp-1",
+    agent_id: "agent-1",
+    seller_id: "user-1",
+    seller_name: null,
+    name: "CodeDrafter",
+    category: "code_generation",
+    description: "Generates production-ready code.",
+    pricing_type: "usage_based",
+    price_per_use: 0.1,
+    is_verified: true,
+    is_active: true,
+  },
+  {
+    id: "mp-2",
+    agent_id: "agent-3",
+    seller_id: "user-2",
+    seller_name: null,
+    name: "TestWriter",
+    category: "testing",
+    description: "Writes unit and integration tests.",
+    pricing_type: "free",
+    price_per_use: null,
+    is_verified: false,
+    is_active: true,
+  },
+];
 
 function renderWithProviders() {
   const queryClient = new QueryClient({
@@ -18,7 +54,15 @@ function renderWithProviders() {
 }
 
 describe("MarketplacePage", () => {
+  const mockedGetCatalog = vi.mocked(getMarketplaceCatalog);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedGetCatalog.mockResolvedValue(mockAgents);
+  });
+
   it("shows loading state initially", () => {
+    mockedGetCatalog.mockImplementation(() => new Promise(() => {}));
     renderWithProviders();
     expect(screen.getByText("Loading marketplace...")).toBeInTheDocument();
   });
