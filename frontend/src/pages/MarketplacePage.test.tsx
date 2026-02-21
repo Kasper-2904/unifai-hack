@@ -3,12 +3,11 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import MarketplacePage from "./MarketplacePage";
-import { getMarketplaceCatalog, publishAgent } from "@/lib/api";
+import { getMarketplaceCatalog } from "@/lib/api";
 import type { MarketplaceAgent } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
   getMarketplaceCatalog: vi.fn(),
-  publishAgent: vi.fn(),
 }));
 
 const mockAgents: MarketplaceAgent[] = [
