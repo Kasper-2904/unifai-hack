@@ -113,6 +113,7 @@ class AgentCreate(BaseModel):
 class AgentChatRequest(BaseModel):
     """Schema for chatting with an agent."""
 
+    team_id: str = Field(..., description="Team ID making the request")
     message: str = Field(..., description="User's message")
     conversation_history: list[dict[str, str]] = Field(
         default_factory=list, description="Previous messages"
@@ -125,6 +126,7 @@ class AgentChatRequest(BaseModel):
 class AgentSkillRequest(BaseModel):
     """Schema for executing an agent skill."""
 
+    team_id: str = Field(..., description="Team ID making the request")
     skill: str = Field(..., description="Skill to execute")
     inputs: dict[str, Any] = Field(default_factory=dict, description="Skill inputs")
     system_prompt_override: str | None = Field(

@@ -17,11 +17,71 @@ from src.api.schemas import (
     AgentSkillRequest,
 )
 from src.core.event_bus import Event, EventType, get_event_bus
-from src.core.state import AgentStatus
+from src.core.state import AgentStatus, PricingType, SubscriptionStatus
 from src.services.agent_inference import get_inference_service
 from src.services.paid_service import get_paid_service
 from src.storage.database import get_db
-from src.storage.models import Agent, User
+from src.storage.models import Agent, AgentSubscription, MarketplaceAgent, Team, User
+
+
+async def verify_agent_subscription(
+    db: AsyncSession,
+    agent_id: str,
+    team_id: str,
+    user_id: str,
+) -> None:
+    """
+    Verify that a team has access to use an agent.
+
+    Access is granted if:
+    1. User owns the agent directly, OR
+    2. Team owns the agent, OR
+    3. Agent is FREE in marketplace, OR
+    4. Team has active subscription to PAID marketplace agent
+
+    Raises HTTPException 403 if no access.
+    """
+    # Check if user owns the agent
+    result = await db.execute(select(Agent).where(Agent.id == agent_id, Agent.owner_id == user_id))
+    if result.scalar_one_or_none():
+        return  # Owner always has access
+
+    # Check if team owns the agent
+    result = await db.execute(select(Agent).where(Agent.id == agent_id, Agent.team_id == team_id))
+    if result.scalar_one_or_none():
+        return  # Team's own agent
+
+    # Check if it's a marketplace agent
+    result = await db.execute(select(MarketplaceAgent).where(MarketplaceAgent.agent_id == agent_id))
+    marketplace_agent = result.scalar_one_or_none()
+
+    if not marketplace_agent:
+        # Not a marketplace agent and user doesn't own it
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this agent",
+        )
+
+    # FREE marketplace agents - no subscription needed
+    if marketplace_agent.pricing_type == PricingType.FREE.value:
+        return
+
+    # PAID agents - require active subscription
+    result = await db.execute(
+        select(AgentSubscription).where(
+            AgentSubscription.team_id == team_id,
+            AgentSubscription.marketplace_agent_id == marketplace_agent.id,
+            AgentSubscription.status == SubscriptionStatus.ACTIVE.value,
+        )
+    )
+    subscription = result.scalar_one_or_none()
+
+    if not subscription:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Team does not have an active subscription to this agent. Please subscribe first.",
+        )
+
 
 agents_router = APIRouter(prefix="/agents", tags=["Agents"])
 
@@ -103,12 +163,22 @@ async def chat_with_agent(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    """Chat with an agent (for humans)."""
+    """Chat with an agent (for humans). Requires active subscription for marketplace agents."""
+    # Verify team exists and user has access
+    result = await db.execute(
+        select(Team).where(Team.id == request.team_id, Team.owner_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+
     result = await db.execute(select(Agent).where(Agent.id == agent_id))
     agent = result.scalar_one_or_none()
 
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    # Check subscription access
+    await verify_agent_subscription(db, agent_id, request.team_id, current_user.id)
 
     agent.last_seen = datetime.utcnow()
     await db.commit()
@@ -130,7 +200,7 @@ async def chat_with_agent(
         product_id=agent_id,
         customer_id=current_user.id,
         event_name="chat",
-        data={"success": True},
+        data={"team_id": request.team_id, "success": True},
     )
 
     return {
@@ -146,12 +216,21 @@ async def execute_agent_skill(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    """Execute a skill on an agent (for orchestrator or humans)."""
+    """Execute a skill on an agent. Requires active subscription for marketplace agents."""
+    # Verify team exists and user has access
+    result = await db.execute(
+        select(Team).where(Team.id == request.team_id, Team.owner_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+
     result = await db.execute(select(Agent).where(Agent.id == agent_id))
     agent = result.scalar_one_or_none()
 
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    await verify_agent_subscription(db, agent_id, request.team_id, current_user.id)
 
     # Verify skill is available
     if agent.skills and request.skill not in agent.skills:
@@ -180,7 +259,7 @@ async def execute_agent_skill(
         product_id=agent_id,
         customer_id=current_user.id,
         event_name="skill_execution",
-        data={"skill": request.skill, "success": True},
+        data={"team_id": request.team_id, "skill": request.skill, "success": True},
     )
 
     return {

@@ -54,7 +54,6 @@ class Settings(BaseSettings):
     # Marketplace & Billing
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
-    stripe_connect_client_id: str = ""
     paid_api_key: str = ""
     paid_webhook_secret: str = ""
     platform_commission_rate: float = 0.20

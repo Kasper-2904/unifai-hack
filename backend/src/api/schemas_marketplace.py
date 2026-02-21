@@ -62,6 +62,8 @@ class MarketplaceAgentResponse(BaseModel):
 
 class AgentSubscribeRequest(BaseModel):
     team_id: str
+    success_url: Optional[str] = None
+    cancel_url: Optional[str] = None
 
 
 class AgentSubscriptionResponse(BaseModel):

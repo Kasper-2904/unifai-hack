@@ -4,8 +4,9 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.storage.models import MarketplaceAgent, Agent
+from src.storage.models import MarketplaceAgent, Agent, SellerProfile
 from src.core.state import PricingType, AgentStatus
+from src.services.stripe_service import get_stripe_service
 from uuid import uuid4
 
 
@@ -31,6 +32,8 @@ class MarketplaceService:
 
         This creates both the Agent record (with seller's endpoint/token)
         and the MarketplaceAgent listing.
+
+        For paid agents, also creates a Stripe Product and Price.
         """
         # Create the agent with seller's hosted endpoint
         agent_id = str(uuid4())
@@ -50,6 +53,33 @@ class MarketplaceService:
         )
         db.add(agent)
 
+        # For paid agents, create Stripe product and price
+        stripe_product_id = None
+        if pricing_type == PricingType.USAGE_BASED and price_per_use and price_per_use > 0:
+            # Get seller's Stripe account if they have one
+            seller_stripe_account_id = None
+            result = await db.execute(
+                select(SellerProfile).where(SellerProfile.user_id == seller_id)
+            )
+            seller_profile = result.scalar_one_or_none()
+            if seller_profile:
+                seller_stripe_account_id = seller_profile.stripe_account_id
+
+            # Create Stripe product and price
+            try:
+                stripe_service = get_stripe_service()
+                product_id, price_id = stripe_service.create_product_and_price(
+                    name=name,
+                    description=description or f"Access to {name} agent",
+                    price_cents=int(price_per_use * 100),  # Convert to cents
+                    seller_stripe_account_id=seller_stripe_account_id,
+                )
+                # Store price_id (we use it for checkout)
+                stripe_product_id = price_id
+            except Exception as e:
+                # Log but don't fail - agent can still be listed, just not purchasable
+                print(f"Warning: Failed to create Stripe product: {e}")
+
         # Create marketplace listing
         marketplace_agent = MarketplaceAgent(
             id=str(uuid4()),
@@ -60,6 +90,7 @@ class MarketplaceService:
             category=category,
             pricing_type=pricing_type.value,
             price_per_use=price_per_use,
+            stripe_product_id=stripe_product_id,
             is_active=True,
             is_verified=False,
         )
