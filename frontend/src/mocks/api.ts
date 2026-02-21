@@ -147,6 +147,17 @@ export async function publishAgent(data: {
   return newAgent;
 }
 
+// ---- Reviewer Findings ----
+
+export async function getReviewerFindings(
+  projectId: string
+): Promise<RiskSignal[]> {
+  await delay();
+  return mockRiskSignals.filter(
+    (r) => r.project_id === projectId && r.source === "reviewer"
+  );
+}
+
 // ---- Dashboard ----
 
 export async function getDeveloperDashboard(
