@@ -42,38 +42,39 @@
 
 ### M2-T1 Build OA planning engine with hosted-agent capability checks (owner: Marin)
 - Status: Todo
-- Description: OA creates assignment plan using shared context and hosted-agent capability queries.
+- Description: OA creates plan by selecting specialist hosted agent first, then suggesting team-member assignment.
 - Acceptance Criteria:
-  - OA outputs one task owner + subtask-to-agent mapping.
-  - Plan includes rationale for each assignment.
+  - OA outputs specialist-agent choice + suggested task owner.
+  - Plan includes rationale for agent choice and owner suggestion.
 - Test Strategy:
   - Unit tests for planning constraints.
   - Integration tests for capability query fallback behavior.
 
 ### M2-T2 Implement hosted-agent autonomous execution pipeline (owner: Kasper)
 - Status: Todo
-- Description: Dispatch approved subtasks to hosted agents and collect draft outputs.
+- Description: Dispatch approved tasks to specialist hosted agents and collect 70% draft outputs.
 - Acceptance Criteria:
   - Agent runs are tracked with status and run metadata.
-  - Draft outputs are attached to correct task/subtask.
+  - 70% draft outputs are attached to correct task and exposed for PM review.
 - Test Strategy:
   - Integration tests for dispatch/retry/failure handling.
 
-### M2-T3 Implement final reviewer gate (owner: Martin)
+### M2-T3 Implement commit-triggered reviewer gate (owner: Martin)
 - Status: Todo
-- Description: Add final all-subtasks-submitted review stage with blocker/non-blocker findings.
+- Description: Trigger reviewer analysis on GitHub commit detection with blocker/non-blocker findings.
 - Acceptance Criteria:
-  - Reviewer runs only when subtasks are complete.
-  - Final review produces merge-readiness decision and rationale.
+  - Reviewer runs when task-owner commit is detected.
+  - Reviewer checks consistency with other tasks and in-flight conflict risk.
+  - Reviewer updates shared context with findings and merge-readiness decision.
 - Test Strategy:
   - End-to-end tests for pass and block scenarios.
 
 ### M2-T4 Implement developer finalize flow over agent drafts (owner: Farhan)
 - Status: Todo
-- Description: Build developer actions to inspect, edit, approve, and finalize agent-generated drafts.
+- Description: Build developer actions to complete last 30% over agent-generated 70% draft and commit to GitHub.
 - Acceptance Criteria:
-  - Developers can finalize subtasks with full audit trail.
-  - Finalized state updates task progress consistently.
+  - Developers can complete and finalize assigned task with full audit trail.
+  - GitHub commit webhook updates task progress and triggers reviewer pipeline.
 - Test Strategy:
   - Integration tests for draft lifecycle and finalization.
 
@@ -155,7 +156,7 @@
   - Role-matrix integration tests and full regression dry run.
 
 ## Parallelization Plan (Team of 4)
-- Kasper track: GitHub ingestion + agent execution pipeline + Paid.ai + developer dashboard.
-- Martin track: hosted-agent registry + reviewer gate + marketplace visibility + security/QA.
+- Kasper track: GitHub ingestion + 70% draft agent pipeline + Paid.ai + developer dashboard.
+- Martin track: hosted-agent registry + commit-triggered reviewer gate + marketplace visibility + security/QA.
 - Farhan track: PM selection/approval + Stripe subscriptions + PM dashboard.
 - Marin track: shared schema + OA planning + agent creation/publish + explainability.

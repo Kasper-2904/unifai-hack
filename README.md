@@ -22,11 +22,11 @@ A platform for software teams where a human PM collaborates with an Orchestratio
 
 ## Core Workflow
 1. Task submitted by PM/developer.
-2. OA generates team + hosted-agent plan from shared context.
-3. PM reviews and approves plan.
-4. Hosted agents draft subtasks.
-5. Developers edit/finalize subtasks.
-6. Reviewer Agent runs final whole-task review before merge.
+2. OA analyzes task + shared context and selects a specialist agent.
+3. Specialist agent produces a 70% draft and OA suggests team-member assignment.
+4. PM reviews and approves/reassigns the suggested owner.
+5. Team member completes final 30% and commits to GitHub.
+6. Reviewer Agent runs on commit detection, checks conflicts/consistency, and updates shared context.
 
 ## Agent Marketplace
 - Teams can browse public agents.

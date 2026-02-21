@@ -46,13 +46,14 @@ Monorepo architecture with a web app, Python API, shared context store, OA plann
 
 ## Workflow Architecture
 1. `Task Submitted` event enters API.
-2. OA reads shared context and builds initial plan.
-3. OA queries hosted-agent capability endpoints when needed.
-4. Plan enters PM approval state.
-5. On approval, subtasks are dispatched to selected hosted agents.
-6. Hosted agents generate drafts; human owner finalizes subtasks.
-7. Reviewer Agent runs final gate once subtasks are complete.
-8. Billing layer records seat usage (Stripe) and agent usage (Paid.ai).
+2. OA reads shared context and selects specialist hosted agent for task drafting.
+3. Specialist agent run generates 70% draft output.
+4. OA proposes suggested team-member assignment with the draft.
+5. PM approves or reassigns task owner.
+6. Assigned team member completes final 30% and commits to GitHub.
+7. GitHub commit event triggers Reviewer Agent checks (consistency + conflict risk).
+8. Reviewer findings update shared context and project memory.
+9. Billing layer records seat usage (Stripe) and agent usage (Paid.ai).
 
 ## Marketplace Architecture
 - Agent creation API for team-defined agents.

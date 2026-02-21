@@ -39,13 +39,14 @@ The platform merges data from:
 
 ## Core Workflow (Required)
 1. Task is submitted (PM or developer).
-2. OA creates initial implementation plan from shared context.
-3. OA may query hosted-agent capabilities for subtask fit.
-4. PM collaborates with OA and must approve final plan.
-5. OA assigns subtasks to hosted agents selected for the project.
-6. Hosted autonomous agents produce drafts for assigned humans.
-7. Humans edit/approve/finalize subtasks locally.
-8. Reviewer Agent performs final pre-merge review for integration safety.
+2. OA analyzes task + shared context.
+3. OA selects a specialist agent (not a person) to execute the task draft.
+4. Specialist agent produces a 70% draft (real code/research/output).
+5. OA provides draft + suggested team-member assignment for PM review.
+6. PM approves assignment or reassigns to a different team member.
+7. Assigned team member completes the final 30% and commits to GitHub.
+8. GitHub commit is detected; Reviewer Agent analyzes consistency/conflicts and updates shared context.
+9. Project context is enriched from outcomes so future agent runs improve.
 
 ## Task Ownership Rule
 - One task is assigned to exactly one team member.
@@ -81,8 +82,8 @@ The platform maintains structured shared context in explicit markdown documents:
 - Public agents are available for other teams to attach to projects.
 
 ### FR-4 Orchestration Planning
-- OA generates implementation plan and team+agent assignment per task.
-- OA can request additional capability details from hosted agents before finalizing.
+- OA generates implementation plan by first selecting a specialist hosted agent.
+- OA produces draft + suggested team-member assignment for PM decision.
 - Plan is not executable until PM approval.
 
 ### FR-5 PM Approval Gate
@@ -90,12 +91,14 @@ The platform maintains structured shared context in explicit markdown documents:
 - Approved plan is versioned and auditable.
 
 ### FR-6 Execution and Drafting
-- For each approved subtask, assigned hosted agent produces draft output.
-- Human assignee can revise, approve, and mark subtask complete.
+- For each approved task, specialist hosted agent produces a 70% draft output.
+- Human assignee completes the remaining 30%, then commits to GitHub.
 - Draft provenance is stored (agent ID, version, timestamp, run metadata).
 
 ### FR-7 Reviewer Agent Governance
-- Reviewer Agent runs final holistic review only when all subtasks are submitted.
+- Reviewer Agent runs on GitHub commit detection.
+- Reviewer checks consistency with other tasks and conflicts with in-flight work.
+- Reviewer updates shared context with findings, decisions, and learned patterns.
 - Reviewer output includes blocker/non-blocker findings and merge-readiness decision.
 - PM can override blocker with explicit audit reason.
 
@@ -137,8 +140,8 @@ The platform maintains structured shared context in explicit markdown documents:
 - [ ] OA can generate team-member + hosted-agent assignment plan using shared context.
 - [ ] One task is always assigned to exactly one team member.
 - [ ] Marketplace supports private/public agent lifecycle and project-level selection.
-- [ ] Hosted agents produce drafts tied to agent/version metadata.
-- [ ] Reviewer Agent performs final whole-task review and returns merge-readiness.
+- [ ] Hosted agents produce 70% drafts tied to agent/version metadata.
+- [ ] Reviewer Agent is triggered by GitHub commit and returns merge-readiness with context updates.
 - [ ] Stripe seat subscription flow is functional for team onboarding.
 - [ ] Paid.ai usage reporting is functional for agent-run pricing.
 - [ ] Developer and PM dashboards expose required execution/risk/billing context.
@@ -152,12 +155,12 @@ The platform maintains structured shared context in explicit markdown documents:
 - Integration tests:
   - GitHub ingestion and normalization
   - marketplace flows (create/publish/select agent)
-  - full lifecycle: submit -> plan -> approve -> draft -> finalize -> final review
+  - full lifecycle: submit -> specialist draft -> PM assignment approval -> human complete -> commit review
   - Stripe subscription webhooks and seat updates
   - Paid.ai usage event reporting
 - End-to-end tests:
-  - developer workflow (draft -> edit -> finalize)
-  - PM workflow (agent selection -> approval -> final review)
+  - developer workflow (receive 70% draft -> complete 30% -> commit)
+  - PM workflow (agent selection -> assignment approval/reassign -> review outcome)
   - billing workflow (subscribe -> consume agent usage -> view charges)
 - Non-functional checks:
   - API latency smoke tests
