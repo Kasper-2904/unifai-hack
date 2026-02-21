@@ -58,6 +58,5 @@ A platform for software teams where a human PM collaborates with an Orchestratio
 - `PROJECT_SPEC.md`: full requirements and acceptance criteria
 - `ARCHITECTURE.md`: system design and component boundaries
 - `TASKS.md`: milestone plan with parallel ownership across the 4-member team
-
-## Development Note
-Run `scripts/bootstrap_env.sh` before local development commands in this repo.
+- `AGENTS.md`: shared team operating rules
+- `TESTING.md`: shared unit-test standard
