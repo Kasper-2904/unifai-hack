@@ -48,6 +48,7 @@ class MarketplaceAgentResponse(BaseModel):
     id: str
     agent_id: str
     seller_id: str
+    seller_name: Optional[str] = None
     name: str
     category: str
     description: Optional[str]

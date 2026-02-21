@@ -1,144 +1,325 @@
-// TaskDetailPage — full detail view for a single task.
-// Shows overview, agent draft, subtasks, and risks in tabs.
-// Also has a "View Context" button that opens the big context panel.
+import { useParams, Link } from 'react-router-dom'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { StatusBadge } from '@/components/shared/StatusBadge'
+import { ProgressBar } from '@/components/shared/ProgressBar'
+import { RiskIndicator } from '@/components/shared/RiskIndicator'
+import { DraftViewer } from '@/components/shared/DraftViewer'
+import { ContextPanel } from '@/components/shared/ContextPanel'
+import { useTask, useSubtasks, useRiskSignals, usePlans } from '@/hooks/use-api'
+import type { SubtaskDetail } from '@/lib/types'
 
-import { useParams, Link } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatusBadge } from "@/components/shared/StatusBadge";
-import { ProgressBar } from "@/components/shared/ProgressBar";
-import { RiskIndicator } from "@/components/shared/RiskIndicator";
-import { DraftViewer } from "@/components/shared/DraftViewer";
-import { ContextPanel } from "@/components/shared/ContextPanel";
-import { useTask, useSubtasks, useRiskSignals, usePlans } from "@/hooks/use-api";
+const statusColors: Record<string, string> = {
+  pending: 'bg-slate-100 text-slate-700',
+  draft_generated: 'bg-blue-100 text-blue-700',
+  in_review: 'bg-amber-100 text-amber-700',
+  approved: 'bg-green-100 text-green-700',
+  finalized: 'bg-emerald-100 text-emerald-700',
+  rejected: 'bg-red-100 text-red-700',
+}
+
+function SubtaskCard({ subtask }: { subtask: SubtaskDetail }) {
+  const statusClass = statusColors[subtask.status] || 'bg-slate-100 text-slate-700'
+
+  return (
+    <Card className="hover:shadow-sm transition-shadow">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-medium text-sm">{subtask.title}</span>
+              <Badge variant="outline" className={`text-xs ${statusClass}`}>
+                {subtask.status.replaceAll('_', ' ')}
+              </Badge>
+              {subtask.priority && (
+                <Badge variant="outline" className="text-xs bg-slate-50">
+                  P{subtask.priority}
+                </Badge>
+              )}
+            </div>
+            {subtask.description && (
+              <p className="mt-2 text-sm text-slate-600 line-clamp-2">
+                {subtask.description}
+              </p>
+            )}
+            {subtask.risk_flags && subtask.risk_flags.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {subtask.risk_flags.map((flag) => (
+                  <span
+                    key={flag}
+                    className="inline-flex items-center gap-1 rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    {flag}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          {subtask.assignee_id && (
+            <div className="flex-shrink-0">
+              <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-medium text-slate-600">
+                {subtask.assignee_id.slice(0, 2).toUpperCase()}
+              </div>
+            </div>
+          )}
+        </div>
+        {subtask.draft_content && (
+          <div className="mt-3 pt-3 border-t border-slate-100">
+            <p className="text-xs text-slate-500 mb-1">Draft preview:</p>
+            <p className="text-xs text-slate-600 line-clamp-2 bg-slate-50 p-2 rounded">
+              {typeof subtask.draft_content === 'string' 
+                ? subtask.draft_content.slice(0, 150) + '...'
+                : 'Draft available'}
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
 
 export default function TaskDetailPage() {
-  const { id } = useParams<{ id: string }>();
-  const { data: task, isLoading: taskLoading } = useTask(id!);
-  const { data: subtasks } = useSubtasks(id!);
-  const { data: risks } = useRiskSignals(id);
-  const { data: plans } = usePlans(id);
+  const { id } = useParams<{ id: string }>()
+  const { data: task, isLoading: taskLoading } = useTask(id!)
+  const { data: subtasks, isLoading: subtasksLoading } = useSubtasks(id!)
+  const { data: risks } = useRiskSignals(id)
+  const { data: plans } = usePlans(id)
 
   if (taskLoading) {
-    return <div className="text-sm text-slate-500">Loading task...</div>;
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-sm text-slate-500">Loading task...</div>
+      </div>
+    )
   }
 
-  if (task === null || task === undefined) {
+  if (!task) {
     return (
-      <div className="text-center py-12">
-        <p className="text-slate-500">Task not found</p>
-        <Link to="/tasks" className="text-sky-600 hover:underline text-sm mt-2 inline-block">
+      <div className="flex flex-col items-center justify-center min-h-[400px]">
+        <div className="rounded-full bg-slate-100 p-3 mb-4">
+          <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <p className="text-slate-600 mb-2">Task not found</p>
+        <Link to="/tasks" className="text-sm text-sky-600 hover:underline">
           Back to tasks
         </Link>
       </div>
-    );
+    )
   }
 
-  // Get the first subtask with draft content to show in the Draft tab
-  const draftSubtask = subtasks?.find((s) => s.draft_content !== null);
+  const draftSubtask = subtasks?.find((s) => s.draft_content !== null)
+  const pendingSubtasks = subtasks?.filter((s) => s.status === 'pending') ?? []
+  const inProgressSubtasks = subtasks?.filter((s) => ['draft_generated', 'in_review'].includes(s.status)) ?? []
+  const completedSubtasks = subtasks?.filter((s) => ['approved', 'finalized'].includes(s.status)) ?? []
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-xl font-semibold">{task.title}</h2>
-            <StatusBadge status={task.status} />
-          </div>
-          {task.description && (
-            <p className="mt-1 text-sm text-slate-600">{task.description}</p>
-          )}
-          <div className="mt-2 flex gap-4 text-xs text-slate-500">
-            {task.assigned_agent_id && (
-              <span>Agent: {task.assigned_agent_id}</span>
-            )}
-            <span>Type: {task.task_type}</span>
-            {task.created_at && (
-              <span>Created: {new Date(task.created_at).toLocaleDateString()}</span>
-            )}
-          </div>
+      {/* Breadcrumb & Header */}
+      <div className="border-b border-slate-200 pb-4">
+        <div className="flex items-center gap-2 text-sm text-slate-500 mb-2">
+          <Link to="/dashboard" className="hover:text-slate-700">Dashboard</Link>
+          <span>/</span>
+          <Link to="/tasks" className="hover:text-slate-700">Tasks</Link>
+          <span>/</span>
+          <span className="text-slate-900 truncate max-w-[200px]">{task.title}</span>
         </div>
-        <ContextPanel projectId="proj-1" currentTaskId={task.id} />
+
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="text-2xl font-semibold text-slate-900">{task.title}</h1>
+              <StatusBadge status={task.status} />
+            </div>
+            {task.description && (
+              <p className="mt-2 text-sm text-slate-600">{task.description}</p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
+              <span className="inline-flex items-center gap-1">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                </svg>
+                {task.task_type}
+              </span>
+              {task.assigned_agent_id && (
+                <span className="inline-flex items-center gap-1">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                  </svg>
+                  Agent assigned
+                </span>
+              )}
+              {task.created_at && (
+                <span className="inline-flex items-center gap-1">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  {new Date(task.created_at).toLocaleDateString()}
+                </span>
+              )}
+            </div>
+          </div>
+          <ContextPanel projectId="proj-1" currentTaskId={task.id} />
+        </div>
       </div>
 
-      {/* Progress */}
+      {/* Progress Bar */}
       <div className="max-w-md">
+        <div className="flex items-center justify-between text-sm mb-2">
+          <span className="text-slate-600">Progress</span>
+          <span className="font-medium">{Math.round(task.progress * 100)}%</span>
+        </div>
         <ProgressBar value={task.progress} />
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="overview">
-        <TabsList>
+      <Tabs defaultValue="subtasks" className="space-y-4">
+        <TabsList variant="jira">
+          <TabsTrigger value="subtasks">
+            Subtasks {subtasks ? `(${subtasks.length})` : ''}
+          </TabsTrigger>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="draft">
-            Draft {draftSubtask ? "" : "(empty)"}
-          </TabsTrigger>
-          <TabsTrigger value="subtasks">
-            Subtasks {subtasks ? `(${subtasks.length})` : ""}
+            Draft {draftSubtask ? '' : '(empty)'}
           </TabsTrigger>
           <TabsTrigger value="risks">
-            Risks {risks ? `(${risks.length})` : ""}
+            Risks {risks && risks.length > 0 ? `(${risks.length})` : ''}
           </TabsTrigger>
         </TabsList>
 
-        {/* Overview Tab */}
-        <TabsContent value="overview" className="mt-4 space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">Task Details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <span className="text-slate-500">Status</span>
-                  <div className="mt-1">
-                    <StatusBadge status={task.status} />
-                  </div>
-                </div>
-                <div>
-                  <span className="text-slate-500">Progress</span>
-                  <div className="mt-1">{Math.round(task.progress * 100)}%</div>
-                </div>
-                <div>
-                  <span className="text-slate-500">Assigned Agent</span>
-                  <div className="mt-1">{task.assigned_agent_id ?? "Not assigned"}</div>
-                </div>
-                <div>
-                  <span className="text-slate-500">Task Type</span>
-                  <div className="mt-1">{task.task_type}</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Plan Info (if exists) */}
-          {plans && plans.length > 0 && (
+        {/* Subtasks Tab */}
+        <TabsContent value="subtasks" className="space-y-6">
+          {subtasksLoading ? (
+            <p className="text-sm text-slate-500">Loading subtasks...</p>
+          ) : !subtasks || subtasks.length === 0 ? (
             <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Plan</CardTitle>
-              </CardHeader>
-              <CardContent className="text-sm space-y-2">
-                {plans.map((plan) => (
-                  <div key={plan.id}>
-                    <div className="flex items-center gap-2">
-                      <StatusBadge status={plan.status} />
-                      <span className="text-xs text-slate-500">v{plan.version}</span>
-                    </div>
-                    {"summary" in plan.plan_data && (
-                      <p className="mt-1 text-slate-600">
-                        {String(plan.plan_data.summary)}
-                      </p>
-                    )}
-                  </div>
-                ))}
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <div className="rounded-full bg-slate-100 p-3 mb-4">
+                  <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  </svg>
+                </div>
+                <p className="text-sm text-slate-600 mb-2">No subtasks yet</p>
+                <p className="text-xs text-slate-400">Subtasks will appear here once a plan is generated.</p>
               </CardContent>
             </Card>
+          ) : (
+            <div className="grid gap-6 lg:grid-cols-3">
+              {/* Pending Column */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-2 h-2 rounded-full bg-slate-400"></div>
+                  <h3 className="text-sm font-medium text-slate-700">Pending</h3>
+                  <Badge variant="outline" className="text-xs">{pendingSubtasks.length}</Badge>
+                </div>
+                <div className="space-y-3">
+                  {pendingSubtasks.map((sub) => (
+                    <SubtaskCard key={sub.id} subtask={sub} />
+                  ))}
+                  {pendingSubtasks.length === 0 && (
+                    <p className="text-xs text-slate-400 text-center py-4">No pending subtasks</p>
+                  )}
+                </div>
+              </div>
+
+              {/* In Progress Column */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-2 h-2 rounded-full bg-amber-400"></div>
+                  <h3 className="text-sm font-medium text-slate-700">In Progress</h3>
+                  <Badge variant="outline" className="text-xs">{inProgressSubtasks.length}</Badge>
+                </div>
+                <div className="space-y-3">
+                  {inProgressSubtasks.map((sub) => (
+                    <SubtaskCard key={sub.id} subtask={sub} />
+                  ))}
+                  {inProgressSubtasks.length === 0 && (
+                    <p className="text-xs text-slate-400 text-center py-4">No subtasks in progress</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Completed Column */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-2 h-2 rounded-full bg-green-400"></div>
+                  <h3 className="text-sm font-medium text-slate-700">Completed</h3>
+                  <Badge variant="outline" className="text-xs">{completedSubtasks.length}</Badge>
+                </div>
+                <div className="space-y-3">
+                  {completedSubtasks.map((sub) => (
+                    <SubtaskCard key={sub.id} subtask={sub} />
+                  ))}
+                  {completedSubtasks.length === 0 && (
+                    <p className="text-xs text-slate-400 text-center py-4">No completed subtasks</p>
+                  )}
+                </div>
+              </div>
+            </div>
           )}
         </TabsContent>
 
+        {/* Overview Tab */}
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Task Details</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-slate-500">Status</span>
+                    <div className="mt-1">
+                      <StatusBadge status={task.status} />
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Progress</span>
+                    <div className="mt-1 font-medium">{Math.round(task.progress * 100)}%</div>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Task Type</span>
+                    <div className="mt-1">{task.task_type}</div>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Agent</span>
+                    <div className="mt-1">{task.assigned_agent_id ? 'Assigned' : 'Not assigned'}</div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {plans && plans.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Plan</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {plans.map((plan) => (
+                    <div key={plan.id} className="text-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <StatusBadge status={plan.status} />
+                        <span className="text-xs text-slate-500">v{plan.version}</span>
+                      </div>
+                      {typeof plan.plan_data.summary === 'string' && (
+                        <p className="text-slate-600">{plan.plan_data.summary}</p>
+                      )}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </TabsContent>
+
         {/* Draft Tab */}
-        <TabsContent value="draft" className="mt-4">
+        <TabsContent value="draft">
           {draftSubtask ? (
             <DraftViewer
               content={draftSubtask.draft_content}
@@ -146,95 +327,66 @@ export default function TaskDetailPage() {
               agentId={draftSubtask.draft_agent_id}
             />
           ) : (
-            <div className="rounded-md border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
-              No draft has been generated for this task yet.
-            </div>
-          )}
-        </TabsContent>
-
-        {/* Subtasks Tab */}
-        <TabsContent value="subtasks" className="mt-4 space-y-3">
-          {subtasks && subtasks.length > 0 ? (
-            subtasks.map((sub) => (
-              <Card key={sub.id}>
-                <CardContent className="py-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-sm">{sub.title}</span>
-                        <StatusBadge status={sub.status} />
-                      </div>
-                      {sub.description && (
-                        <p className="mt-1 text-xs text-slate-500">
-                          {sub.description}
-                        </p>
-                      )}
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      Priority: {sub.priority}
-                    </div>
-                  </div>
-                  {sub.risk_flags.length > 0 && (
-                    <div className="mt-2 flex gap-1">
-                      {sub.risk_flags.map((flag) => (
-                        <span
-                          key={flag}
-                          className="rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700"
-                        >
-                          {flag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))
-          ) : (
-            <div className="rounded-md border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
-              No subtasks for this task.
-            </div>
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <div className="rounded-full bg-slate-100 p-3 mb-4">
+                  <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <p className="text-sm text-slate-600 mb-2">No draft yet</p>
+                <p className="text-xs text-slate-400">A draft will be generated when an agent works on this task.</p>
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
 
         {/* Risks Tab */}
-        <TabsContent value="risks" className="mt-4 space-y-3">
+        <TabsContent value="risks" className="space-y-3">
           {risks && risks.length > 0 ? (
             risks.map((risk) => (
               <Card key={risk.id}>
-                <CardContent className="py-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <RiskIndicator severity={risk.severity} />
-                      <span className="font-medium text-sm">{risk.title}</span>
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <RiskIndicator severity={risk.severity} />
+                        <span className="font-medium text-sm">{risk.title}</span>
+                        {risk.is_resolved && (
+                          <Badge variant="outline" className="text-xs bg-green-50 text-green-700">
+                            Resolved
+                          </Badge>
+                        )}
+                      </div>
+                      {risk.description && (
+                        <p className="mt-2 text-sm text-slate-600">{risk.description}</p>
+                      )}
+                      {risk.recommended_action && (
+                        <div className="mt-3 rounded bg-slate-50 p-3 text-sm">
+                          <span className="font-medium text-slate-700">Recommended: </span>
+                          <span className="text-slate-600">{risk.recommended_action}</span>
+                        </div>
+                      )}
                     </div>
-                    {risk.is_resolved && (
-                      <span className="text-xs text-green-600">Resolved</span>
-                    )}
                   </div>
-                  {risk.description && (
-                    <p className="mt-2 text-xs text-slate-600">{risk.description}</p>
-                  )}
-                  {risk.recommended_action && (
-                    <div className="mt-2 rounded bg-slate-50 p-2 text-xs text-slate-700">
-                      <span className="font-medium">Recommended: </span>
-                      {risk.recommended_action}
-                    </div>
-                  )}
                 </CardContent>
               </Card>
             ))
           ) : (
-            <div className="rounded-md border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
-              No risk signals for this task.
-            </div>
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <div className="rounded-full bg-green-100 p-3 mb-4">
+                  <svg className="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-sm text-slate-600 mb-2">No risks detected</p>
+                <p className="text-xs text-slate-400">Risk signals will appear here if any are identified.</p>
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
       </Tabs>
-
-      {/* Back link */}
-      <Link to="/tasks" className="text-sm text-sky-600 hover:underline inline-block">
-        Back to all tasks
-      </Link>
     </div>
-  );
+  )
 }

@@ -81,6 +81,8 @@ class AgentInferenceService:
         # Custom/seller-hosted endpoints use direct HTTP calls with access token
         if provider in ("openai", "anthropic", "groq", "ollama"):
             return await self._call_litellm(agent, messages)
+        elif provider == "crusoe":
+            return await self._call_crusoe(agent, messages)
         else:
             # "custom", "openai-compatible", or any other provider
             return await self._call_custom_endpoint(agent, messages)
@@ -108,6 +110,54 @@ class AgentInferenceService:
             return response.choices[0].message.content or ""
         except Exception as e:
             return f"Error calling agent: {e}"
+
+    async def _call_crusoe(self, agent: Any, messages: list[dict]) -> str:
+        """
+        Call Crusoe Cloud inference API.
+
+        Uses OpenAI-compatible format with Crusoe's endpoint.
+        """
+        from src.config import get_settings
+
+        settings = get_settings()
+        endpoint = agent.inference_endpoint or settings.crusoe_api_base
+        api_key = agent.inference_api_key_encrypted or settings.crusoe_api_key
+        model = agent.inference_model or "NVFP4/Qwen3-235B-A22B-Instruct-2507-FP4"
+
+        if not api_key:
+            return "Error: No Crusoe API key configured"
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": 1,
+            "top_p": 0.95,
+        }
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{endpoint.rstrip('/')}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=120.0,
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data["choices"][0]["message"]["content"]
+            except httpx.HTTPStatusError as e:
+                return (
+                    f"Error calling Crusoe API (HTTP {e.response.status_code}): {e.response.text}"
+                )
+            except httpx.RequestError as e:
+                return f"Error connecting to Crusoe API: {e}"
+            except Exception as e:
+                return f"Error calling Crusoe API: {e}"
 
     async def _call_custom_endpoint(self, agent: Any, messages: list[dict]) -> str:
         """

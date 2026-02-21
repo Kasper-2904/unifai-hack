@@ -37,14 +37,28 @@ async def pm_dashboard(
     """Get PM dashboard data."""
     from src.core.state import RiskSeverity
 
-    # Verify project ownership
-    result = await db.execute(
-        select(Project).where(Project.id == project_id, Project.owner_id == current_user.id)
-    )
+    # Get project
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
 
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    # Check if user is owner or team member
+    is_owner = project.owner_id == current_user.id
+    if not is_owner:
+        member_result = await db.execute(
+            select(TeamMember).where(
+                TeamMember.project_id == project_id,
+                TeamMember.user_id == current_user.id,
+            )
+        )
+        is_member = member_result.scalar_one_or_none() is not None
+        if not is_member:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have access to this project",
+            )
 
     # Get team members
     members_result = await db.execute(select(TeamMember).where(TeamMember.project_id == project_id))

@@ -224,7 +224,9 @@ class TaskDetail(TaskResponse):
     input_data: dict[str, Any] = {}
     result: dict[str, Any] | None = None
     error: str | None = None
-    metadata: dict[str, Any] = {}
+    extra_data: dict[str, Any] = {}
+
+    model_config = {"from_attributes": True}
 
 
 class TaskProgress(BaseModel):

@@ -21,7 +21,7 @@ from src.api.schemas import (
 from src.core.event_bus import Event, EventType, get_event_bus
 from src.core.state import TaskStatus
 from src.storage.database import get_db
-from src.storage.models import Agent, Project, ProjectAllowedAgent, Task, User
+from src.storage.models import Agent, Project, ProjectAllowedAgent, Task, TeamMember, User
 
 projects_router = APIRouter(prefix="/projects", tags=["Projects"])
 tasks_router = APIRouter(prefix="/tasks", tags=["Tasks"])
@@ -57,8 +57,50 @@ async def list_projects(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[Project]:
-    """List projects available in the current workspace."""
-    result = await db.execute(select(Project).order_by(Project.created_at.desc()))
+    """List projects the user owns or is a member of."""
+    # Get project IDs where user is a team member
+    member_project_ids = select(TeamMember.project_id).where(TeamMember.user_id == current_user.id)
+
+    # Get projects user owns OR is a member of
+    result = await db.execute(
+        select(Project)
+        .where((Project.owner_id == current_user.id) | (Project.id.in_(member_project_ids)))
+        .order_by(Project.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+@projects_router.get("/{project_id}", response_model=ProjectResponse)
+async def get_project(
+    project_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Project:
+    """Get a single project by ID."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    return project
+
+
+@projects_router.get("/{project_id}/tasks", response_model=list[TaskResponse])
+async def list_project_tasks(
+    project_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[Task]:
+    """List tasks linked to a project via plans."""
+    from src.storage.models import Plan
+
+    # Get task IDs from plans for this project
+    task_ids_query = select(Plan.task_id).where(Plan.project_id == project_id)
+
+    result = await db.execute(
+        select(Task).where(Task.id.in_(task_ids_query)).order_by(Task.created_at.desc())
+    )
     return list(result.scalars().all())
 
 
@@ -141,7 +183,9 @@ async def add_project_allowed_agent(
     return result.scalar_one()
 
 
-@projects_router.delete("/{project_id}/allowlist/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+@projects_router.delete(
+    "/{project_id}/allowlist/{agent_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def remove_project_allowed_agent(
     project_id: str,
     agent_id: str,
@@ -230,8 +274,20 @@ async def list_tasks(
     team_id: str | None = None,
     status: TaskStatus | None = None,
 ) -> list[Task]:
-    """List tasks, optionally filtered by team and status."""
-    query = select(Task).where(Task.created_by_id == current_user.id)
+    """List tasks the user has access to (created by or is team member)."""
+    from src.storage.models import TeamMember, Project
+
+    # Get projects where user is a member or owner
+    member_project_ids = select(TeamMember.project_id).where(TeamMember.user_id == current_user.id)
+
+    # Also get projects owned by user
+    owned_project_ids = select(Project.id).where(Project.owner_id == current_user.id)
+
+    query = select(Task).where(
+        (Task.created_by_id == current_user.id)
+        | (Task.team_id.in_(member_project_ids))
+        | (Task.team_id.in_(owned_project_ids))
+    )
 
     if team_id:
         query = query.where(Task.team_id == team_id)
@@ -249,12 +305,36 @@ async def get_task(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Task:
     """Get task details including input/output."""
-    result = await db.execute(
-        select(Task).where(Task.id == task_id, Task.created_by_id == current_user.id)
-    )
+    from src.storage.models import TeamMember, Project
+
+    # Get task first
+    result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
 
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    # Check access - user must be creator, owner of task's team, or team member
+    if task.created_by_id != current_user.id:
+        # Check if user is member of any project or owner
+        member_result = await db.execute(
+            select(TeamMember).where(TeamMember.user_id == current_user.id)
+        )
+        member = member_result.scalar_one_or_none()
+
+        # Check if user owns the project
+        if task.team_id:
+            project_result = await db.execute(
+                select(Project).where(
+                    Project.id == task.team_id, Project.owner_id == current_user.id
+                )
+            )
+            project = project_result.scalar_one_or_none()
+            if not project and not member:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+        elif not member:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    return task
 
     return task

@@ -221,6 +221,7 @@ export interface MarketplaceAgent {
   id: string;
   agent_id: string;
   seller_id: string;
+  seller_name: string | null;
   name: string;
   category: string;
   description: string | null;

@@ -23,6 +23,27 @@ from src.storage.models import AuditLog, Project, RiskSignal, Task, User
 risks_router = APIRouter(prefix="/risks", tags=["Risk Signals"])
 reviewer_router = APIRouter(prefix="/reviewer", tags=["Reviewer Agent"])
 
+
+@risks_router.get("", response_model=list[RiskSignalResponse])
+async def list_risks(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    task_id: str | None = None,
+    include_resolved: bool = False,
+) -> list[RiskSignal]:
+    """List risk signals, optionally filtered by task_id."""
+    query = select(RiskSignal)
+
+    if task_id:
+        query = query.where(RiskSignal.task_id == task_id)
+
+    if not include_resolved:
+        query = query.where(RiskSignal.is_resolved == False)
+
+    result = await db.execute(query.order_by(RiskSignal.created_at.desc()))
+    return list(result.scalars().all())
+
+
 # ============== Risk Signal Routes ==============
 
 
@@ -150,9 +171,7 @@ async def finalize_task_review(
 
     # Verify project belongs to current user
     proj_result = await db.execute(
-        select(Project).where(
-            Project.id == body.project_id, Project.owner_id == current_user.id
-        )
+        select(Project).where(Project.id == body.project_id, Project.owner_id == current_user.id)
     )
     if not proj_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
@@ -183,6 +202,7 @@ async def finalize_task_review(
         )
     except Exception as e:
         import logging
+
         logging.getLogger(__name__).warning("Usage tracking failed in reviewer: %s", e)
 
     await db.commit()

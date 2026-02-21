@@ -17,6 +17,7 @@ import ProjectsPage from '@/pages/ProjectsPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import TaskDetailPage from '@/pages/TaskDetailPage'
 import TaskListPage from '@/pages/TaskListPage'
+import TeamDetailPage from '@/pages/TeamDetailPage'
 
 const queryClient = new QueryClient()
 
@@ -36,13 +37,14 @@ function App() {
                 <Route element={<AppShell />}>
                   <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   <Route path="/dashboard" element={<DashboardPage />} />
+                  <Route path="/teams/:teamId" element={<TeamDetailPage />} />
+                  <Route path="/projects" element={<ProjectsPage />} />
+                  <Route path="/projects/:id" element={<ProjectDetailPage />} />
                   <Route path="/tasks" element={<TaskListPage />} />
                   <Route path="/tasks/:id" element={<TaskDetailPage />} />
                   <Route path="/marketplace" element={<MarketplacePage />} />
                   <Route path="/marketplace/:agentId" element={<AgentDetailPage />} />
                   <Route path="/context" element={<ContextExplorerPage />} />
-                  <Route path="/projects" element={<ProjectsPage />} />
-                  <Route path="/projects/:id" element={<ProjectDetailPage />} />
                   <Route path="/billing" element={<BillingPage />} />
                 </Route>
               </Route>
