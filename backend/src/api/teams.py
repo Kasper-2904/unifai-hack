@@ -72,6 +72,41 @@ async def get_team(
     return team
 
 
+@teams_router.get("/{team_id}/projects")
+async def list_team_projects(
+    team_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[dict]:
+    """List projects where user is a member within a team context."""
+    # Get project IDs where user is a team member
+    member_project_ids = select(TeamMember.project_id).where(TeamMember.user_id == current_user.id)
+
+    # Get projects user owns OR is a member of
+    result = await db.execute(
+        select(Project)
+        .where((Project.owner_id == current_user.id) | (Project.id.in_(member_project_ids)))
+        .order_by(Project.created_at.desc())
+    )
+    projects = list(result.scalars().all())
+
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "description": p.description,
+            "goals": p.goals,
+            "milestones": p.milestones,
+            "timeline": p.timeline,
+            "github_repo": p.github_repo,
+            "owner_id": p.owner_id,
+            "created_at": p.created_at,
+            "updated_at": p.updated_at,
+        }
+        for p in projects
+    ]
+
+
 # ============== Team Member Routes ==============
 
 

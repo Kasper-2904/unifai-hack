@@ -135,6 +135,7 @@ export async function publishAgent(data: {
     id: `mp-${Date.now()}`,
     agent_id: `agent-${Date.now()}`,
     seller_id: "user-1",
+    seller_name: null,
     name: data.name,
     category: data.category,
     description: data.description,

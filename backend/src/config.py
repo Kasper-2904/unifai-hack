@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     default_llm_model: str = "claude-sonnet-4-20250514"
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    crusoe_api_key: str | None = None
+    crusoe_api_base: str = "https://hackeurope.crusoecloud.com/v1"
 
     # MCP Configuration
     mcp_connection_timeout: int = 30  # seconds

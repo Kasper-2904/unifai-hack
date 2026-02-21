@@ -1,11 +1,15 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ProgressBar } from '@/components/shared/ProgressBar'
+import { StatusBadge } from '@/components/shared/StatusBadge'
 import { toApiErrorMessage } from '@/lib/apiClient'
+import { getProjectTasks } from '@/lib/api'
 import {
   addProjectAllowedAgent,
   approvePlan,
@@ -14,20 +18,25 @@ import {
   rejectPlan,
   removeProjectAllowedAgent,
 } from '@/lib/pmApi'
+import { TaskStatus } from '@/lib/types'
+
+const taskColumns = [
+  { status: TaskStatus.PENDING, label: 'Pending', color: 'bg-slate-100' },
+  { status: TaskStatus.ASSIGNED, label: 'Assigned', color: 'bg-blue-50' },
+  { status: TaskStatus.IN_PROGRESS, label: 'In Progress', color: 'bg-amber-50' },
+  { status: TaskStatus.COMPLETED, label: 'Completed', color: 'bg-green-50' },
+]
 
 function formatDate(value: string | null): string {
-  if (!value) {
-    return 'n/a'
-  }
+  if (!value) return 'n/a'
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return 'n/a'
-  }
-  return date.toLocaleString()
+  if (Number.isNaN(date.getTime())) return 'n/a'
+  return date.toLocaleDateString()
 }
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [selectedAgentId, setSelectedAgentId] = useState('')
   const [rejectingPlanId, setRejectingPlanId] = useState<string | null>(null)
@@ -38,6 +47,12 @@ export default function ProjectDetailPage() {
   const dashboardQuery = useQuery({
     queryKey: ['pm-dashboard', projectId],
     queryFn: () => fetchPMDashboard(projectId),
+    enabled: Boolean(projectId),
+  })
+
+  const tasksQuery = useQuery({
+    queryKey: ['project-tasks', projectId],
+    queryFn: () => getProjectTasks(projectId),
     enabled: Boolean(projectId),
   })
 
@@ -67,17 +82,17 @@ export default function ProjectDetailPage() {
   const approvePlanMutation = useMutation({
     mutationFn: (planId: string) => approvePlan(planId),
     onSuccess: (plan) => {
-      setActionMessage(`Plan ${plan.id} approved at ${formatDate(plan.approved_at)}.`)
+      setActionMessage(`Plan approved.`)
       void queryClient.invalidateQueries({ queryKey: ['pm-dashboard', projectId] })
     },
   })
 
   const rejectPlanMutation = useMutation({
     mutationFn: ({ planId, reason }: { planId: string; reason: string }) => rejectPlan(planId, reason),
-    onSuccess: (plan) => {
+    onSuccess: () => {
       setRejectingPlanId(null)
       setRejectionReason('')
-      setActionMessage(`Plan ${plan.id} rejected.`)
+      setActionMessage(`Plan rejected.`)
       void queryClient.invalidateQueries({ queryKey: ['pm-dashboard', projectId] })
     },
   })
@@ -93,304 +108,418 @@ export default function ProjectDetailPage() {
   )
 
   if (!projectId) {
-    return <p className="text-sm text-red-600">Project id is missing.</p>
+    return <p className="text-sm text-red-600">Project ID is missing.</p>
   }
 
   if (dashboardQuery.isLoading) {
-    return <p className="text-sm text-slate-600">Loading PM dashboard...</p>
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-sm text-slate-500">Loading project...</div>
+      </div>
+    )
   }
 
   if (dashboardQuery.isError) {
-    return <p className="text-sm text-red-600">{toApiErrorMessage(dashboardQuery.error, 'Failed to load PM dashboard.')}</p>
+    return (
+      <div className="p-4">
+        <p className="text-sm text-red-600">
+          {toApiErrorMessage(dashboardQuery.error, 'Failed to load project.')}
+        </p>
+      </div>
+    )
   }
 
   const dashboard = dashboardQuery.data
+  const tasks = tasksQuery.data ?? []
 
-  if (!dashboard) {
-    return <p className="text-sm text-slate-600">No dashboard data found.</p>
+  if (!dashboard || !dashboard.project) {
+    return <p className="text-sm text-red-600">Project not found or you don't have access.</p>
   }
 
+  const project = dashboard.project
+
   return (
-    <section className="space-y-6">
-      <div>
-        <Link className="text-sm text-sky-700 hover:underline" to="/projects">
-          Back to projects
-        </Link>
-        <h2 className="text-2xl font-semibold">{dashboard.project.name}</h2>
-        <p className="text-sm text-slate-600">{dashboard.project.description ?? 'No description available.'}</p>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="border-b border-slate-200 pb-4">
+        <div className="flex items-center gap-2 text-sm text-slate-500 mb-2">
+          <Link to="/dashboard" className="hover:text-slate-700">Dashboard</Link>
+          <span>/</span>
+          <Link to="/projects" className="hover:text-slate-700">Projects</Link>
+          <span>/</span>
+          <span className="text-slate-900">{project.name}</span>
+        </div>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900">{project.name}</h1>
+            <p className="text-sm text-slate-500 mt-1">
+              {project.description || 'No description'}
+            </p>
+          </div>
+          {project.github_repo && (
+            <a
+              href={project.github_repo}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 rounded-md hover:bg-slate-200"
+            >
+              <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+              </svg>
+              GitHub
+            </a>
+          )}
+        </div>
       </div>
 
-      {actionMessage && <p className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700">{actionMessage}</p>}
+      {actionMessage && (
+        <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700">
+          {actionMessage}
+          <button
+            className="ml-2 text-sky-500 hover:text-sky-700"
+            onClick={() => setActionMessage(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Goals and Progress</CardTitle>
-          <CardDescription>Project goals, milestones, timeline, and task status rollup.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <h3 className="font-medium">Goals</h3>
-            {dashboard.project.goals.length === 0 ? (
-              <p className="text-sm text-slate-600">No goals defined.</p>
-            ) : (
-              <ul className="list-disc pl-6 text-sm text-slate-700">
-                {dashboard.project.goals.map((goal) => (
-                  <li key={goal}>{goal}</li>
-                ))}
-              </ul>
-            )}
+      <Tabs defaultValue="tasks" className="space-y-4">
+        <TabsList variant="jira">
+          <TabsTrigger value="tasks">Tasks</TabsTrigger>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="plans">Plans</TabsTrigger>
+          <TabsTrigger value="settings">Settings</TabsTrigger>
+        </TabsList>
+
+        {/* Tasks Tab - Kanban Board */}
+        <TabsContent value="tasks" className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-medium">Task Board</h2>
+            <Badge variant="outline" className="text-xs">
+              {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'}
+            </Badge>
           </div>
 
-          <div>
-            <h3 className="font-medium">Task Status</h3>
-            {Object.keys(dashboard.tasks_by_status).length === 0 ? (
-              <p className="text-sm text-slate-600">No project tasks linked yet.</p>
-            ) : (
-              <div className="grid gap-2 md:grid-cols-3">
-                {Object.entries(dashboard.tasks_by_status).map(([status, count]) => (
-                  <div key={status} className="rounded-md border border-slate-200 p-3">
-                    <p className="text-xs uppercase tracking-wide text-slate-500">{status.replaceAll('_', ' ')}</p>
-                    <p className="text-xl font-semibold">{count}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <h3 className="font-medium">Timeline</h3>
-            <p className="text-sm text-slate-700">
-              Start: {String(dashboard.project.timeline.start ?? 'n/a')} | End: {String(dashboard.project.timeline.end ?? 'n/a')}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Team Progress Snapshot</CardTitle>
-          <CardDescription>Current project members and workload.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {dashboard.team_members.length === 0 ? (
-            <p className="text-sm text-slate-600">No team members assigned yet.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Member ID</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Capacity</TableHead>
-                  <TableHead>Current Load</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {dashboard.team_members.map((member) => (
-                  <TableRow key={member.id}>
-                    <TableCell>{member.user_id}</TableCell>
-                    <TableCell>{member.role}</TableCell>
-                    <TableCell>{member.capacity.toFixed(2)}</TableCell>
-                    <TableCell>{member.current_load.toFixed(2)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Plan Approval Gate</CardTitle>
-          <CardDescription>Pending OA plans that require PM approval or rejection.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {dashboard.pending_approvals.length === 0 ? (
-            <p className="text-sm text-slate-600">No plans pending PM decision.</p>
-          ) : (
-            dashboard.pending_approvals.map((plan) => (
-              <div key={plan.id} className="space-y-2 rounded-md border border-slate-200 p-4">
-                <p className="text-sm font-medium">Plan {plan.id}</p>
-                <p className="text-sm text-slate-600">
-                  Created: {formatDate(plan.created_at)} | Status: {plan.status}
-                </p>
-                <p className="text-sm text-slate-700">
-                  Summary:{' '}
-                  {typeof plan.plan_data.summary === 'string'
-                    ? plan.plan_data.summary
-                    : 'No summary provided.'}
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      if (!window.confirm(`Approve plan ${plan.id}?`)) {
-                        return
-                      }
-                      approvePlanMutation.mutate(plan.id)
-                    }}
-                    disabled={approvePlanMutation.isPending || rejectPlanMutation.isPending}
-                  >
-                    Approve
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setRejectingPlanId(plan.id)
-                      setRejectionReason('')
-                    }}
-                    disabled={approvePlanMutation.isPending || rejectPlanMutation.isPending}
-                  >
-                    Reject
-                  </Button>
+          {tasksQuery.isLoading ? (
+            <p className="text-sm text-slate-500">Loading tasks...</p>
+          ) : tasks.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <div className="rounded-full bg-slate-100 p-3 mb-4">
+                  <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  </svg>
                 </div>
+                <p className="text-sm text-slate-600 mb-2">No tasks yet</p>
+                <p className="text-xs text-slate-400">Tasks linked to this project will appear here.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="flex gap-4 overflow-x-auto pb-4">
+              {taskColumns.map((col) => {
+                const columnTasks = tasks.filter((t) => t.status === col.status)
+                return (
+                  <div key={col.status} className="flex-shrink-0 w-[280px]">
+                    {/* Column Header */}
+                    <div className="flex items-center justify-between mb-3 px-1">
+                      <div className="flex items-center gap-2">
+                        <StatusBadge status={col.status} />
+                        <span className="text-xs text-slate-500 font-medium">
+                          {columnTasks.length}
+                        </span>
+                      </div>
+                    </div>
 
-                {rejectingPlanId === plan.id && (
-                  <form
-                    className="space-y-2"
-                    onSubmit={(event) => {
-                      event.preventDefault()
-                      const reason = rejectionReason.trim()
-                      if (!reason) {
-                        setActionMessage('Rejection reason is required.')
-                        return
-                      }
-                      if (!window.confirm(`Reject plan ${plan.id}?`)) {
-                        return
-                      }
-                      rejectPlanMutation.mutate({ planId: plan.id, reason })
-                    }}
-                  >
-                    <Input
-                      aria-label={`Rejection reason for plan ${plan.id}`}
-                      placeholder="Provide rejection reason"
-                      value={rejectionReason}
-                      onChange={(event) => setRejectionReason(event.target.value)}
-                    />
-                    <div className="flex items-center gap-2">
-                      <Button type="submit" variant="destructive" disabled={rejectPlanMutation.isPending}>
-                        Confirm rejection
-                      </Button>
+                    {/* Column Body */}
+                    <div className={`space-y-3 min-h-[300px] rounded-lg ${col.color} p-3`}>
+                      {columnTasks.length > 0 ? (
+                        columnTasks.map((task) => (
+                          <Card
+                            key={task.id}
+                            className="cursor-pointer transition-all hover:shadow-md hover:border-slate-300 bg-white"
+                            onClick={() => navigate(`/tasks/${task.id}`)}
+                          >
+                            <CardContent className="p-3 space-y-2">
+                              <div className="font-medium text-sm leading-tight">
+                                {task.title}
+                              </div>
+                              {task.description && (
+                                <p className="text-xs text-slate-500 line-clamp-2">
+                                  {task.description}
+                                </p>
+                              )}
+                              <ProgressBar value={task.progress} />
+                              <div className="flex items-center justify-between text-xs text-slate-400">
+                                <span>{task.task_type}</span>
+                                {task.assigned_agent_id && (
+                                  <Badge variant="outline" className="text-xs">
+                                    Assigned
+                                  </Badge>
+                                )}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))
+                      ) : (
+                        <div className="text-xs text-slate-400 text-center py-8">
+                          No tasks
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* Overview Tab */}
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Goals */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Goals</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {project.goals.length === 0 ? (
+                  <p className="text-sm text-slate-500">No goals defined.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {project.goals.map((goal, idx) => (
+                      <li key={idx} className="flex items-start gap-2 text-sm">
+                        <svg className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span className="text-slate-700">{goal}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Task Status Summary */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Task Status</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {Object.keys(dashboard.tasks_by_status).length === 0 ? (
+                  <p className="text-sm text-slate-500">No tasks linked yet.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {Object.entries(dashboard.tasks_by_status).map(([status, count]) => (
+                      <div key={status} className="rounded-md bg-slate-50 p-3">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">
+                          {status.replaceAll('_', ' ')}
+                        </p>
+                        <p className="text-xl font-semibold text-slate-900">{count}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Team Members */}
+            <Card className="md:col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Team Members</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {dashboard.team_members.length === 0 ? (
+                  <p className="text-sm text-slate-500">No team members assigned.</p>
+                ) : (
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {dashboard.team_members.map((member) => (
+                      <div key={member.id} className="flex items-center gap-3 rounded-md border border-slate-200 p-3">
+                        <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-medium text-slate-600">
+                          {member.user_id.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{member.role}</p>
+                          <p className="text-xs text-slate-500">
+                            Load: {(member.current_load * 100).toFixed(0)}%
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* Plans Tab */}
+        <TabsContent value="plans" className="space-y-4">
+          {/* Pending Approvals */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Pending Approvals</CardTitle>
+              <CardDescription>Plans waiting for your review.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {dashboard.pending_approvals.length === 0 ? (
+                <p className="text-sm text-slate-500">No plans pending approval.</p>
+              ) : (
+                <div className="space-y-3">
+                  {dashboard.pending_approvals.map((plan) => (
+                    <div key={plan.id} className="rounded-md border border-slate-200 p-4 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className="text-sm font-medium">Plan #{plan.id.slice(0, 8)}</p>
+                          <p className="text-xs text-slate-500">
+                            Created {formatDate(plan.created_at)}
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="bg-amber-50 text-amber-700">
+                          {plan.status.replaceAll('_', ' ')}
+                        </Badge>
+                      </div>
+                      
+                      {typeof plan.plan_data.summary === 'string' && (
+                        <p className="text-sm text-slate-600">{plan.plan_data.summary}</p>
+                      )}
+
+                      {rejectingPlanId === plan.id ? (
+                        <form
+                          className="space-y-2"
+                          onSubmit={(e) => {
+                            e.preventDefault()
+                            if (!rejectionReason.trim()) return
+                            rejectPlanMutation.mutate({ planId: plan.id, reason: rejectionReason })
+                          }}
+                        >
+                          <Input
+                            placeholder="Rejection reason..."
+                            value={rejectionReason}
+                            onChange={(e) => setRejectionReason(e.target.value)}
+                          />
+                          <div className="flex gap-2">
+                            <Button type="submit" variant="destructive" size="sm" disabled={rejectPlanMutation.isPending}>
+                              Confirm Reject
+                            </Button>
+                            <Button type="button" variant="outline" size="sm" onClick={() => setRejectingPlanId(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                        </form>
+                      ) : (
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => approvePlanMutation.mutate(plan.id)}
+                            disabled={approvePlanMutation.isPending}
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setRejectingPlanId(plan.id)}
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Recent Plans */}
+          {dashboard.recent_plans.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Recent Plans</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {dashboard.recent_plans.map((plan) => (
+                    <div key={plan.id} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
+                      <span className="text-sm">Plan #{plan.id.slice(0, 8)}</span>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">
+                          {plan.status.replaceAll('_', ' ')}
+                        </Badge>
+                        <span className="text-xs text-slate-500">
+                          {formatDate(plan.approved_at ?? plan.updated_at ?? plan.created_at)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* Settings Tab */}
+        <TabsContent value="settings" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Agent Allowlist</CardTitle>
+              <CardDescription>Manage which agents can work on this project.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (!selectedAgentId) return
+                  addAllowedAgentMutation.mutate(selectedAgentId)
+                }}
+              >
+                <select
+                  className="h-9 flex-1 min-w-[200px] rounded-md border border-slate-300 bg-white px-3 text-sm"
+                  value={selectedAgentId}
+                  onChange={(e) => setSelectedAgentId(e.target.value)}
+                >
+                  <option value="">Select an agent...</option>
+                  {candidateAgents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name} ({agent.role})
+                    </option>
+                  ))}
+                </select>
+                <Button type="submit" disabled={!selectedAgentId || addAllowedAgentMutation.isPending}>
+                  Add Agent
+                </Button>
+              </form>
+
+              {dashboard.allowed_agents.length === 0 ? (
+                <p className="text-sm text-slate-500">No agents allowed yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {dashboard.allowed_agents.map((entry) => (
+                    <div key={entry.id} className="flex items-center justify-between rounded-md border border-slate-200 p-3">
+                      <div>
+                        <p className="font-medium text-sm">{entry.agent.name}</p>
+                        <p className="text-xs text-slate-500">
+                          {entry.agent.role} - Added {formatDate(entry.created_at)}
+                        </p>
+                      </div>
                       <Button
-                        type="button"
                         variant="outline"
-                        onClick={() => {
-                          setRejectingPlanId(null)
-                          setRejectionReason('')
-                        }}
+                        size="sm"
+                        onClick={() => removeAllowedAgentMutation.mutate(entry.agent_id)}
+                        disabled={removeAllowedAgentMutation.isPending}
                       >
-                        Cancel
+                        Remove
                       </Button>
                     </div>
-                  </form>
-                )}
-              </div>
-            ))
-          )}
-
-          {(approvePlanMutation.error || rejectPlanMutation.error) && (
-            <p className="text-sm text-red-600">
-              {toApiErrorMessage(
-                approvePlanMutation.error ?? rejectPlanMutation.error,
-                'Plan action failed.',
-              )}
-            </p>
-          )}
-
-          {dashboard.recent_plans.length > 0 && (
-            <div className="space-y-2">
-              <h3 className="font-medium">Recent Plan Decisions</h3>
-              {dashboard.recent_plans.map((plan) => (
-                <p key={plan.id} className="text-sm text-slate-700">
-                  {plan.id}: {plan.status} at {formatDate(plan.approved_at ?? plan.updated_at ?? plan.created_at)}
-                </p>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Project Agent Allowlist</CardTitle>
-          <CardDescription>Add and remove agents available to OA for this project.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <form
-            className="flex flex-wrap items-center gap-2"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (!selectedAgentId) {
-                return
-              }
-              addAllowedAgentMutation.mutate(selectedAgentId)
-            }}
-          >
-            <select
-              className="h-9 min-w-64 rounded-md border border-slate-300 bg-white px-3 text-sm"
-              aria-label="Select agent to allow"
-              value={selectedAgentId}
-              onChange={(event) => setSelectedAgentId(event.target.value)}
-            >
-              <option value="">Select an owned agent</option>
-              {candidateAgents.map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.name} ({agent.role})
-                </option>
-              ))}
-            </select>
-            <Button type="submit" disabled={!selectedAgentId || addAllowedAgentMutation.isPending}>
-              Add agent
-            </Button>
-          </form>
-
-          {agentsQuery.isLoading && <p className="text-sm text-slate-600">Loading available agents...</p>}
-          {agentsQuery.isError && (
-            <p className="text-sm text-red-600">{toApiErrorMessage(agentsQuery.error, 'Failed to load agents.')}</p>
-          )}
-          {addAllowedAgentMutation.error && (
-            <p className="text-sm text-red-600">
-              {toApiErrorMessage(addAllowedAgentMutation.error, 'Failed to add agent to allowlist.')}
-            </p>
-          )}
-          {removeAllowedAgentMutation.error && (
-            <p className="text-sm text-red-600">
-              {toApiErrorMessage(removeAllowedAgentMutation.error, 'Failed to remove agent from allowlist.')}
-            </p>
-          )}
-
-          {dashboard.allowed_agents.length === 0 ? (
-            <p className="text-sm text-slate-600">No agents currently allowed for this project.</p>
-          ) : (
-            <div className="space-y-2">
-              {dashboard.allowed_agents.map((entry) => (
-                <div key={entry.id} className="flex items-center justify-between rounded-md border border-slate-200 p-3">
-                  <div>
-                    <p className="font-medium">{entry.agent.name}</p>
-                    <p className="text-sm text-slate-600">
-                      Role: {entry.agent.role} | Added: {formatDate(entry.created_at)}
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      if (!window.confirm(`Remove ${entry.agent.name} from allowlist?`)) {
-                        return
-                      }
-                      removeAllowedAgentMutation.mutate(entry.agent_id)
-                    }}
-                    disabled={removeAllowedAgentMutation.isPending}
-                  >
-                    Remove
-                  </Button>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </section>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
   )
 }

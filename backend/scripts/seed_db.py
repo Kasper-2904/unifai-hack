@@ -209,20 +209,19 @@ async def seed_database():
         print(f"  Created 5 team memberships with roles (PM, ADMIN, DEVELOPER)")
 
         # ============== AGENTS ==============
-        print("\n[5/7] Creating Agents (Seller-Hosted)...")
+        print("\n[5/7] Creating Agents...")
 
-        # These represent seller-hosted agents with their own endpoints and access tokens
-        # In production, sellers would provide their own endpoints and tokens
-        default_agents = [
+        # Platform agents - powered by Anthropic Claude
+        platform_agents = [
             {
-                "name": "Senior Python Developer",
+                "name": "Claude Code Assistant",
                 "role": "coder",
-                "description": "Expert in writing, refactoring, and debugging Python code. Specializes in FastAPI and backend development.",
-                "inference_endpoint": "https://seller1-python-agent.example.com/v1",
-                "access_token": "seller1_token_python_dev_abc123",
-                "inference_provider": "openai-compatible",
-                "inference_model": "gpt-4o",
-                "system_prompt": "You are an expert Python developer. Help users write clean, efficient, and well-documented code.",
+                "description": "Powered by Claude. Expert in writing, reviewing, and explaining code across multiple languages.",
+                "inference_endpoint": "",
+                "access_token": settings.anthropic_api_key or "",
+                "inference_provider": "anthropic",
+                "inference_model": "claude-sonnet-4-20250514",
+                "system_prompt": "You are Claude, an expert software developer. Help users write clean, efficient code.",
                 "skills": [
                     "generate_code",
                     "review_code",
@@ -233,84 +232,98 @@ async def seed_database():
                 "category": "Development",
                 "pricing_type": PricingType.FREE.value,
                 "price": 0.0,
+                "owner_id": admin_id,
             },
             {
-                "name": "Security Reviewer",
+                "name": "Qwen3 Research Assistant",
+                "role": "researcher",
+                "description": "Powered by Qwen3-235B on Crusoe Cloud. Expert in research, analysis, summarization, and answering complex questions.",
+                "inference_endpoint": settings.crusoe_api_base
+                or "https://hackeurope.crusoecloud.com/v1",
+                "access_token": settings.crusoe_api_key or "",
+                "inference_provider": "crusoe",
+                "inference_model": "NVFP4/Qwen3-235B-A22B-Instruct-2507-FP4",
+                "system_prompt": "You are Qwen3, an expert research assistant. Help users analyze information, summarize documents, answer complex questions, and provide well-reasoned insights. Be thorough yet concise.",
+                "skills": [
+                    "research",
+                ],
+                "category": "Research",
+                "pricing_type": PricingType.FREE.value,
+                "price": 0.0,
+                "owner_id": admin_id,
+            },
+            {
+                "name": "Claude Security Reviewer",
                 "role": "reviewer",
-                "description": "Performs static analysis and checks for OWASP vulnerabilities in pull requests.",
-                "inference_endpoint": "https://seller2-security-agent.example.com/v1",
-                "access_token": "seller2_token_security_xyz789",
-                "inference_provider": "openai-compatible",
-                "inference_model": "gpt-4o",
-                "system_prompt": "You are a security expert. Review code for vulnerabilities and suggest fixes.",
+                "description": "Powered by Claude. Performs security analysis and checks for OWASP vulnerabilities.",
+                "inference_endpoint": "",
+                "access_token": settings.anthropic_api_key or "",
+                "inference_provider": "anthropic",
+                "inference_model": "claude-sonnet-4-20250514",
+                "system_prompt": "You are a security expert. Review code for vulnerabilities and suggest fixes following OWASP guidelines.",
                 "skills": ["review_code", "check_security", "suggest_improvements"],
                 "category": "Security",
-                "pricing_type": PricingType.USAGE_BASED.value,
-                "price": 0.05,
+                "pricing_type": PricingType.FREE.value,
+                "price": 0.0,
+                "owner_id": admin_id,
             },
             {
-                "name": "Frontend Designer",
+                "name": "Claude Frontend Expert",
                 "role": "designer",
-                "description": "Generates React components and translates UI requirements into TailwindCSS.",
-                "inference_endpoint": "https://seller3-frontend-agent.example.com/v1",
-                "access_token": "seller3_token_frontend_def456",
-                "inference_provider": "openai-compatible",
-                "inference_model": "gpt-4o",
+                "description": "Powered by Claude. Creates React components and modern UI with TailwindCSS.",
+                "inference_endpoint": "",
+                "access_token": settings.anthropic_api_key or "",
+                "inference_provider": "anthropic",
+                "inference_model": "claude-sonnet-4-20250514",
                 "system_prompt": "You are a frontend expert. Create modern, accessible React components with TailwindCSS.",
                 "skills": ["generate_code", "design_component", "suggest_improvements"],
                 "category": "Frontend",
-                "pricing_type": PricingType.USAGE_BASED.value,
-                "price": 0.10,
-            },
-            {
-                "name": "Code Reviewer",
-                "role": "reviewer",
-                "description": "Thorough code reviewer focusing on best practices, patterns, and maintainability.",
-                "inference_endpoint": "https://seller1-code-reviewer.example.com/v1",
-                "access_token": "seller1_token_reviewer_ghi012",
-                "inference_provider": "openai-compatible",
-                "inference_model": "gpt-4o-mini",
-                "system_prompt": "You are an expert code reviewer. Focus on code quality, best practices, and maintainability.",
-                "skills": ["review_code", "suggest_improvements", "explain_code"],
-                "category": "Quality",
                 "pricing_type": PricingType.FREE.value,
                 "price": 0.0,
+                "owner_id": admin_id,
             },
+        ]
+
+        # Seller-hosted agent example - simulates a third-party seller
+        seller_agents = [
             {
-                "name": "DevOps Engineer",
+                "name": "DevOps Pro Agent",
                 "role": "coder",
-                "description": "Expert in Docker, Kubernetes, CI/CD pipelines, and infrastructure as code.",
-                "inference_endpoint": "https://seller4-devops-agent.example.com/v1",
-                "access_token": "seller4_token_devops_jkl345",
+                "description": "Third-party seller agent. Expert in Docker, Kubernetes, CI/CD pipelines, and infrastructure as code.",
+                "inference_endpoint": "https://seller-devops-agent.example.com/v1",
+                "access_token": "seller_token_devops_abc123xyz",
                 "inference_provider": "openai-compatible",
                 "inference_model": "gpt-4o",
                 "system_prompt": "You are a DevOps expert. Help with containerization, deployment, and infrastructure automation.",
                 "skills": ["generate_code", "debug_code", "suggest_improvements"],
                 "category": "DevOps",
                 "pricing_type": PricingType.USAGE_BASED.value,
-                "price": 0.08,
+                "price": 0.05,
+                "owner_id": dev1_id,  # Seller is dev1
             },
         ]
+
+        default_agents = platform_agents + seller_agents
 
         agent_ids = []
         for agent_data in default_agents:
             agent_id = str(uuid4())
             agent_ids.append(agent_id)
 
-            # Create the agent with seller's endpoint and access token
+            # Create the agent
             agent = Agent(
                 id=agent_id,
                 name=agent_data["name"],
                 role=agent_data["role"],
                 description=agent_data["description"],
                 inference_endpoint=agent_data["inference_endpoint"],
-                inference_api_key_encrypted=agent_data["access_token"],  # Seller's access token
+                inference_api_key_encrypted=agent_data["access_token"],
                 inference_provider=agent_data["inference_provider"],
                 inference_model=agent_data["inference_model"],
                 system_prompt=agent_data["system_prompt"],
                 skills=agent_data["skills"],
-                owner_id=admin_id,
-                team_id=team_id,
+                owner_id=agent_data["owner_id"],
+                team_id=team_id if agent_data["owner_id"] == admin_id else None,
                 status=AgentStatus.ONLINE,
             )
             session.add(agent)
@@ -319,18 +332,20 @@ async def seed_database():
             market_agent = MarketplaceAgent(
                 id=str(uuid4()),
                 agent_id=agent_id,
-                seller_id=admin_id,
+                seller_id=agent_data["owner_id"],
                 name=agent_data["name"],
                 description=agent_data["description"],
                 category=agent_data["category"],
                 pricing_type=agent_data["pricing_type"],
                 price_per_use=agent_data["price"],
-                is_verified=True,
+                is_verified=agent_data["owner_id"] == admin_id,  # Platform agents are verified
                 is_active=True,
             )
             session.add(market_agent)
 
-        print(f"  Created {len(default_agents)} seller-hosted agents with marketplace listings")
+        print(
+            f"  Created {len(platform_agents)} platform agents + {len(seller_agents)} seller agent"
+        )
 
         # ============== TASKS ==============
         print("\n[6/7] Creating Tasks...")
@@ -344,7 +359,7 @@ async def seed_database():
             status=TaskStatus.COMPLETED,
             team_id=team_id,
             created_by_id=pm_id,
-            assigned_agent_id=agent_ids[0],  # Python Developer
+            assigned_agent_id=agent_ids[0],  # Claude Code Assistant
             progress=1.0,
         )
         session.add(task1)
@@ -358,7 +373,7 @@ async def seed_database():
             status=TaskStatus.IN_PROGRESS,
             team_id=team_id,
             created_by_id=pm_id,
-            assigned_agent_id=agent_ids[2],  # Frontend Designer
+            assigned_agent_id=agent_ids[0],  # Claude Code Assistant
             progress=0.6,
         )
         session.add(task2)
@@ -372,7 +387,7 @@ async def seed_database():
             status=TaskStatus.PENDING,
             team_id=team_id,
             created_by_id=pm_id,
-            assigned_agent_id=agent_ids[1],  # Security Reviewer
+            assigned_agent_id=agent_ids[0],  # Claude Code Assistant
             progress=0.0,
         )
         session.add(task3)
@@ -386,12 +401,12 @@ async def seed_database():
             status=TaskStatus.ASSIGNED,
             team_id=team_id,
             created_by_id=pm_id,
-            assigned_agent_id=agent_ids[4],  # DevOps Engineer
+            assigned_agent_id=agent_ids[0],  # Claude Code Assistant
             progress=0.0,
         )
         session.add(task4)
 
-        print(f"  Created 4 tasks with various statuses")
+        print(f"  Created 4 tasks")
 
         # ============== PLANS ==============
         print("\n[7/7] Creating Plans and Subtasks...")
@@ -431,7 +446,7 @@ async def seed_database():
             priority=1,
             status=SubtaskStatus.FINALIZED.value,
             assignee_id=tm4.id,  # Charlie (frontend dev)
-            assigned_agent_id=agent_ids[2],
+            assigned_agent_id=agent_ids[0],  # Claude Code Assistant
         )
         session.add(subtask1)
 
@@ -444,7 +459,7 @@ async def seed_database():
             priority=2,
             status=SubtaskStatus.IN_REVIEW.value,
             assignee_id=tm4.id,
-            assigned_agent_id=agent_ids[0],
+            assigned_agent_id=agent_ids[0],  # Claude Code Assistant
         )
         session.add(subtask2)
 
@@ -504,7 +519,7 @@ async def seed_database():
         print(f"  - 1 Team")
         print(f"  - 2 Projects")
         print(f"  - 5 Team Memberships (with PM/ADMIN/DEVELOPER roles)")
-        print(f"  - {len(default_agents)} Agents")
+        print(f"  - {len(platform_agents)} Platform Agents + {len(seller_agents)} Seller Agent")
         print(f"  - 4 Tasks")
         print(f"  - 2 Plans with subtasks")
 

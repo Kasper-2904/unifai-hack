@@ -1,10 +1,9 @@
-// React Query hooks — each hook fetches data from the mock API
+// React Query hooks — each hook fetches data from the real API
 // and caches it so components don't re-fetch on every render.
 //
 // How it works:
 // - useQuery takes a "key" (like a cache label) and a function to fetch data
 // - It returns { data, isLoading, error } that components can use
-// - When the real backend is ready, we just change the fetch functions
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -21,7 +20,7 @@ import {
   getTasks,
   getTeamMembers,
   publishAgent,
-} from "@/mocks/api";
+} from "@/lib/api";
 
 export function useTasks() {
   return useQuery({ queryKey: ["tasks"], queryFn: getTasks });

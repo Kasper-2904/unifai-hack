@@ -4,7 +4,7 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.storage.models import MarketplaceAgent, Agent, SellerProfile
+from src.storage.models import MarketplaceAgent, Agent, SellerProfile, User
 from src.core.state import PricingType, AgentStatus
 from src.services.stripe_service import get_stripe_service
 from uuid import uuid4
@@ -104,32 +104,75 @@ class MarketplaceService:
         return marketplace_agent
 
     @staticmethod
-    async def list_public_agents(
-        db: AsyncSession, category: Optional[str] = None
-    ) -> List[MarketplaceAgent]:
+    async def list_public_agents(db: AsyncSession, category: Optional[str] = None) -> List[dict]:
         query = (
             select(MarketplaceAgent)
-            .options(selectinload(MarketplaceAgent.agent))
+            .options(
+                selectinload(MarketplaceAgent.agent),
+                selectinload(MarketplaceAgent.seller),
+            )
             .where(MarketplaceAgent.is_active == True)
         )
         if category:
             query = query.where(MarketplaceAgent.category == category)
 
         result = await db.execute(query)
-        return list(result.scalars().all())
+        agents = list(result.scalars().all())
+
+        # Add seller_name to each agent
+        return [
+            {
+                "id": agent.id,
+                "agent_id": agent.agent_id,
+                "seller_id": agent.seller_id,
+                "seller_name": agent.seller.full_name or agent.seller.username
+                if agent.seller
+                else None,
+                "name": agent.name,
+                "category": agent.category,
+                "description": agent.description,
+                "pricing_type": agent.pricing_type,
+                "price_per_use": agent.price_per_use,
+                "is_verified": agent.is_verified,
+                "is_active": agent.is_active,
+                "agent": agent.agent,
+            }
+            for agent in agents
+        ]
 
     @staticmethod
-    async def get_marketplace_agent(
-        db: AsyncSession, marketplace_agent_id: str
-    ) -> Optional[MarketplaceAgent]:
+    async def get_marketplace_agent(db: AsyncSession, marketplace_agent_id: str) -> Optional[dict]:
         """Get a single marketplace agent with its linked agent details."""
         query = (
             select(MarketplaceAgent)
-            .options(selectinload(MarketplaceAgent.agent))
+            .options(
+                selectinload(MarketplaceAgent.agent),
+                selectinload(MarketplaceAgent.seller),
+            )
             .where(MarketplaceAgent.id == marketplace_agent_id)
         )
         result = await db.execute(query)
-        return result.scalar_one_or_none()
+        agent = result.scalar_one_or_none()
+
+        if not agent:
+            return None
+
+        return {
+            "id": agent.id,
+            "agent_id": agent.agent_id,
+            "seller_id": agent.seller_id,
+            "seller_name": agent.seller.full_name or agent.seller.username
+            if agent.seller
+            else None,
+            "name": agent.name,
+            "category": agent.category,
+            "description": agent.description,
+            "pricing_type": agent.pricing_type,
+            "price_per_use": agent.price_per_use,
+            "is_verified": agent.is_verified,
+            "is_active": agent.is_active,
+            "agent": agent.agent,
+        }
 
 
 def get_marketplace_service() -> MarketplaceService:

@@ -6,6 +6,11 @@ export async function listProjects(): Promise<Project[]> {
   return data
 }
 
+export async function getProject(projectId: string): Promise<Project> {
+  const { data } = await apiClient.get<Project>(`/projects/${projectId}`)
+  return data
+}
+
 export async function fetchPMDashboard(projectId: string): Promise<PMDashboard> {
   const { data } = await apiClient.get<PMDashboard>(`/dashboard/pm/${projectId}`)
   return data

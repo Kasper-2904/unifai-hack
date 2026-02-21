@@ -34,6 +34,12 @@ export function AgentCard({ agent }: AgentCardProps) {
           </p>
         )}
 
+        {agent.seller_name && (
+          <p className="text-xs text-slate-400">
+            by {agent.seller_name}
+          </p>
+        )}
+
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="bg-slate-100 text-slate-600 border-transparent text-xs">
             {agent.category.replace("_", " ")}

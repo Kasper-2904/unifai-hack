@@ -28,7 +28,25 @@ logger = logging.getLogger(__name__)
 plans_router = APIRouter(prefix="/plans", tags=["Plans"])
 
 
-@plans_router.post("/generate", response_model=PlanGenerateResponse, status_code=status.HTTP_201_CREATED)
+@plans_router.get("", response_model=list[PlanResponse])
+async def list_plans(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    task_id: str | None = None,
+) -> list[Plan]:
+    """List plans, optionally filtered by task_id."""
+    query = select(Plan)
+
+    if task_id:
+        query = query.where(Plan.task_id == task_id)
+
+    result = await db.execute(query.order_by(Plan.created_at.desc()))
+    return list(result.scalars().all())
+
+
+@plans_router.post(
+    "/generate", response_model=PlanGenerateResponse, status_code=status.HTTP_201_CREATED
+)
 async def generate_plan(
     plan_data: PlanGenerate,
     current_user: Annotated[User, Depends(get_current_user)],

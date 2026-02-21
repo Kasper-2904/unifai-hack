@@ -24,6 +24,22 @@ from src.storage.models import AuditLog, Subtask, User, Task
 subtasks_router = APIRouter(prefix="/subtasks", tags=["Subtasks"])
 
 
+@subtasks_router.get("", response_model=list[SubtaskResponse])
+async def list_subtasks(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    task_id: str | None = None,
+) -> list[Subtask]:
+    """List subtasks, optionally filtered by task_id."""
+    query = select(Subtask)
+
+    if task_id:
+        query = query.where(Subtask.task_id == task_id)
+
+    result = await db.execute(query.order_by(Subtask.priority.asc(), Subtask.created_at.desc()))
+    return list(result.scalars().all())
+
+
 @subtasks_router.post("", response_model=SubtaskResponse, status_code=status.HTTP_201_CREATED)
 async def create_subtask(
     subtask_data: SubtaskCreate,
