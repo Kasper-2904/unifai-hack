@@ -1,7 +1,7 @@
 # Architecture
 
 ## Overview
-Monorepo architecture with a web app, Python API, shared context store, OA planning engine, hosted-agent runtime, reviewer final-gate engine, marketplace service, and billing integrations.
+Monorepo architecture with a web app, Python API, shared context store, OA planning engine, MCP-connected agent runtime, reviewer final-gate engine, marketplace service, and billing integrations.
 
 ## Technology Choices
 - Backend: Python service(s)
@@ -13,7 +13,7 @@ Monorepo architecture with a web app, Python API, shared context store, OA plann
 
 ## Core Components
 - `frontend/`: React app for developer, PM, marketplace, and billing views.
-- `backend/`: Python API for ingestion, planning, approvals, agent execution, review, marketplace, and billing.
+- `backend/`: Python API for ingestion, planning, approvals, MCP agent execution, review, marketplace, and billing.
 - `docs/shared_context/`: Canonical markdown files serving as the shared orchestration memory.
 
 ## Shared Context Files (Canonical)
@@ -39,7 +39,7 @@ Monorepo architecture with a web app, Python API, shared context store, OA plann
 
 ## Workflow Architecture
 1. `Task Submitted` event enters API.
-2. OA reads shared context and selects specialist hosted agent for task drafting.
+2. OA reads shared context and selects specialist MCP-connected agent for task drafting.
 3. Specialist agent run generates 70% draft output.
 4. OA proposes suggested team-member assignment with the draft.
 5. PM approves or reassigns task owner.
@@ -47,6 +47,15 @@ Monorepo architecture with a web app, Python API, shared context store, OA plann
 7. GitHub commit event triggers Reviewer Agent checks (consistency + conflict risk).
 8. Reviewer findings update shared context and project memory.
 9. Billing layer records seat usage (Stripe) and agent usage (Paid.ai).
+
+## Current Implementation Notes
+- Backend currently exposes implemented routers for:
+  - auth/users/teams/agents/tasks
+  - projects/plans/subtasks/team-members/risks/dashboards
+  - github sync
+  - marketplace and billing endpoints
+- MCP manager/connection layer is implemented for agent registration and tool routing.
+- Some orchestration workflow behavior is scaffolded and still being hardened to match final product flow.
 
 ## Marketplace Architecture
 - Agent creation API for team-defined agents.

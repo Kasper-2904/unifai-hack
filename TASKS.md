@@ -7,28 +7,28 @@
 ## Milestone 1: Core Setup & Context
 
 ### M1-T1 Core Backend Models & Auth API (owner: Farhan)
-- Status: Todo
+- Status: In Progress
 - Description: Setup SQLite database, core models (Users, Teams, Projects, Tasks), and JWT Auth APIs.
 - Acceptance Criteria:
   - Database is initialized.
   - Auth endpoints (`/register`, `/login`) work.
 
 ### M1-T2 GitHub Ingestion Adapter (owner: Kasper)
-- Status: Todo
+- Status: Done
 - Description: Build connector and normalization for GitHub task/PR/CI context.
 - Acceptance Criteria:
   - Ingestion jobs fetch and normalize core GitHub entities.
   - Adapter failures are retried and surfaced.
 
 ### M1-T3 Scaffold Frontend Repository (owner: Martin)
-- Status: Todo
+- Status: In Progress
 - Description: Setup Vite + React + TypeScript + TailwindCSS environment.
 - Acceptance Criteria:
   - Frontend app runs locally on port 5173.
   - Proxy configured to `localhost:8000/api`.
 
 ### M1-T4 Shared UI Components & Auth Flow (owner: Marin)
-- Status: Todo
+- Status: In Progress
 - Description: Build base UI shell, navigation, and Login/Register screens.
 - Acceptance Criteria:
   - User can register, login, and persist token in frontend state.
@@ -37,28 +37,28 @@
 ## Milestone 2: Orchestration & Workflows
 
 ### M2-T1 LangGraph Orchestrator & Reviewer API (owner: Kasper)
-- Status: Todo
+- Status: In Progress
 - Description: Implement OA planning logic and Final Reviewer gate.
 - Acceptance Criteria:
   - OA generates plan with agent assignment.
   - Reviewer agent can process GitHub commits and flag risks.
 
 ### M2-T2 Agent Execution & PM Approval APIs (owner: Farhan)
-- Status: Todo
+- Status: In Progress
 - Description: Build MCP Client connections, tool execution, and PM approval endpoints.
 - Acceptance Criteria:
   - PM can approve/reject plans.
   - Tasks can be dispatched to agents via MCP.
 
 ### M2-T3 Developer Dashboard UI (owner: Martin)
-- Status: Todo
+- Status: In Progress
 - Description: Build developer UI for task list, sub-actions, agent draft review, and risk graphs.
 - Acceptance Criteria:
   - Developer sees assigned tasks.
   - Developer can finalize a draft.
 
 ### M2-T4 PM Dashboard UI (owner: Marin)
-- Status: Todo
+- Status: In Progress
 - Description: Build PM view with goals, team progress, and approval gates.
 - Acceptance Criteria:
   - PM can manage project agent allowlist.
@@ -67,14 +67,14 @@
 ## Milestone 3: Marketplace & Billing
 
 ### M3-T1 Marketplace API & Stripe Integration (owner: Farhan)
-- Status: Todo
+- Status: In Progress
 - Description: Build agent catalog APIs, Stripe seat checkout, and Stripe Connect.
 - Acceptance Criteria:
   - `MarketplaceAgent` catalog endpoints work.
   - Stripe subscriptions can be created via checkout session.
 
 ### M3-T2 Paid.ai Usage Metering (owner: Kasper)
-- Status: Todo
+- Status: In Progress
 - Description: Emit hosted-agent usage events to Paid.ai and track internal usage DB.
 - Acceptance Criteria:
   - Agent runs produce billable usage events.

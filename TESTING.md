@@ -16,6 +16,11 @@ This file defines the minimum unit-test standard for the team.
 - Backend: `backend/tests/`
 - Frontend: `frontend/src/` tests (`*.test.ts` / `*.test.tsx`)
 
+## Current Commands
+- Backend: `cd backend && pytest`
+- Frontend quality gate: `cd frontend && npm run lint && npm run build`
+- Frontend unit tests: `cd frontend && npm run test` (when test script is configured)
+
 ## PR Test Note
 Each PR must include:
 - Tests added/updated

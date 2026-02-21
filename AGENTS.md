@@ -27,6 +27,7 @@ This file is the shared operating guide for our team of 4.
 - Keep agent scope limited to the task.
 - Do not silently change architecture contracts.
 - If an agent cannot complete a required step, document it in the PR.
+- MCP-connected agent behavior must be documented if it differs from planned fully-hosted flow.
 
 ## Definition of Done
 - Acceptance criteria for task are met.
