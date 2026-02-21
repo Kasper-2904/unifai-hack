@@ -17,7 +17,7 @@ from src.api.projects import (
     remove_project_allowed_agent,
 )
 from src.api.schemas import PlanReject
-from src.core.state import PlanStatus, TaskStatus
+from src.core.state import PlanStatus, TaskStatus, UserRole
 from src.main import create_app
 from src.storage.database import get_db
 from src.storage.models import Agent, AuditLog, Plan, Project, ProjectAllowedAgent, RiskSignal, Task, TeamMember, User
@@ -54,12 +54,27 @@ async def _make_agent(db: AsyncSession, owner_id: str, name: str = "Coder Agent"
         name=name,
         role="coder",
         description="Test agent",
-        mcp_endpoint="http://localhost:8001",
+        inference_endpoint="https://inference.example.test/v1/chat/completions",
         owner_id=owner_id,
     )
     db.add(agent)
     await db.flush()
     return agent
+
+
+async def _add_pm_membership(db: AsyncSession, *, user_id: str, project_id: str) -> TeamMember:
+    membership = TeamMember(
+        id=str(uuid4()),
+        user_id=user_id,
+        project_id=project_id,
+        role=UserRole.PM.value,
+        skills=[],
+        capacity=1.0,
+        current_load=0.0,
+    )
+    db.add(membership)
+    await db.flush()
+    return membership
 
 
 async def _make_task(db: AsyncSession, owner_id: str) -> Task:
@@ -208,6 +223,7 @@ async def test_pm_plan_approval_success_requires_owner_and_creates_audit_log(db_
     owner = _make_user(db_session, "owner")
     outsider = _make_user(db_session, "outsider")
     project = await _make_project(db_session, owner.id)
+    await _add_pm_membership(db_session, user_id=owner.id, project_id=project.id)
     task = await _make_task(db_session, owner.id)
     plan = await _make_plan(db_session, project.id, task.id, PlanStatus.PENDING_PM_APPROVAL)
 
@@ -235,6 +251,7 @@ async def test_pm_plan_approval_success_requires_owner_and_creates_audit_log(db_
 async def test_pm_plan_approval_rejects_wrong_status_and_missing_plan(db_session: AsyncSession):
     owner = _make_user(db_session, "owner")
     project = await _make_project(db_session, owner.id)
+    await _add_pm_membership(db_session, user_id=owner.id, project_id=project.id)
     task = await _make_task(db_session, owner.id)
     approved_plan = await _make_plan(db_session, project.id, task.id, PlanStatus.APPROVED)
 
@@ -253,6 +270,7 @@ async def test_pm_plan_reject_success_requires_owner_and_creates_audit_log(db_se
     owner = _make_user(db_session, "owner")
     outsider = _make_user(db_session, "outsider")
     project = await _make_project(db_session, owner.id)
+    await _add_pm_membership(db_session, user_id=owner.id, project_id=project.id)
     task = await _make_task(db_session, owner.id)
     plan = await _make_plan(db_session, project.id, task.id, PlanStatus.PENDING_PM_APPROVAL)
 
@@ -290,6 +308,7 @@ async def test_pm_plan_reject_success_requires_owner_and_creates_audit_log(db_se
 async def test_pm_plan_reject_rejects_wrong_status_and_missing_plan(db_session: AsyncSession):
     owner = _make_user(db_session, "owner")
     project = await _make_project(db_session, owner.id)
+    await _add_pm_membership(db_session, user_id=owner.id, project_id=project.id)
     task = await _make_task(db_session, owner.id)
     rejected_plan = await _make_plan(db_session, project.id, task.id, PlanStatus.REJECTED)
 
