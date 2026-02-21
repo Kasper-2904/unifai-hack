@@ -107,11 +107,13 @@ The platform maintains structured shared context in explicit markdown documents:
 - Detail panel: task goal, assigned agents, progress, errors, risks.
 - Visual risk/progress graph per task.
 - Big context mode: other project tasks, who/which agent works on what, project description, timeline.
+- Agent Marketplace access: browse available agents and view agent capabilities/pricing before PM selection.
 
 ### FR-9 PM Dashboard
 - Projects overview: description, goals, milestones, timeline, GitHub references.
 - Team members, current tasks, stage/progress, selected agents.
 - Critical delivery risk summary.
+- Agent Marketplace management: discover agents, approve project-allowed agents, and manage public/private usage policy per project.
 
 ### FR-10 Stripe Subscription Billing
 - Seat-based subscription per team/workspace.

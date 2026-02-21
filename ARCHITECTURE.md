@@ -12,16 +12,16 @@ Monorepo architecture with a web app, Python API, shared context store, OA plann
 - Agent usage billing: Paid.ai
 
 ## Core Components
-- `apps/web`: developer, PM, and marketplace/billing views (React).
-- `apps/api`: Python API for ingestion, planning, approvals, agent execution, review, marketplace, and billing.
-- `packages/shared-context`: schemas and services for shared context documents.
-- `packages/orchestrator-core`: OA planning, assignment, explainability.
-- `packages/agent-runtime`: hosted autonomous agent execution orchestration.
-- `packages/reviewer-core`: final whole-task review and merge-readiness scoring.
-- `packages/marketplace-core`: agent catalog, publish/private flags, project agent selection.
-- `packages/billing-core`: Stripe seat subscription + Paid.ai usage metering integration.
-- `packages/integrations`: GitHub adapter + vendor connectors.
-- `packages/shared`: shared types, validation, auth helpers, constants.
+- `frontend/`: React app for developer, PM, marketplace, and billing views.
+- `backend/api/`: Python API for ingestion, planning, approvals, agent execution, review, marketplace, and billing.
+- `backend/packages/shared-context`: schemas and services for shared context documents.
+- `backend/packages/orchestrator-core`: OA planning, assignment, explainability.
+- `backend/packages/agent-runtime`: hosted autonomous agent execution orchestration.
+- `backend/packages/reviewer-core`: final whole-task review and merge-readiness scoring.
+- `backend/packages/marketplace-core`: agent catalog, publish/private flags, project agent selection.
+- `backend/packages/billing-core`: Stripe seat subscription + Paid.ai usage metering integration.
+- `backend/packages/integrations`: GitHub adapter + vendor connectors.
+- `backend/packages/shared`: shared types, validation, auth helpers, constants.
 
 ## Shared Context Files (Canonical)
 - `docs/shared_context/PROJECT_OVERVIEW.md`
@@ -102,16 +102,16 @@ Monorepo architecture with a web app, Python API, shared context store, OA plann
 - Final-review-only reviewer flow in MVP.
 
 ## Repository Layout
-- `apps/web`
-- `apps/api`
-- `packages/shared-context`
-- `packages/orchestrator-core`
-- `packages/agent-runtime`
-- `packages/reviewer-core`
-- `packages/marketplace-core`
-- `packages/billing-core`
-- `packages/integrations`
-- `packages/shared`
+- `frontend`
+- `backend/api`
+- `backend/packages/shared-context`
+- `backend/packages/orchestrator-core`
+- `backend/packages/agent-runtime`
+- `backend/packages/reviewer-core`
+- `backend/packages/marketplace-core`
+- `backend/packages/billing-core`
+- `backend/packages/integrations`
+- `backend/packages/shared`
 - `docs/shared_context`
 - `tests/unit`
 - `tests/integration`
