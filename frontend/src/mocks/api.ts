@@ -5,6 +5,7 @@
 // =============================================================
 
 import type {
+  Agent,
   DeveloperDashboard,
   MarketplaceAgent,
   Plan,
@@ -16,6 +17,7 @@ import type {
 } from "@/lib/types";
 
 import {
+  mockAgents,
   mockMarketplaceAgents,
   mockPlans,
   mockProjects,
@@ -37,9 +39,9 @@ export async function getTasks(): Promise<Task[]> {
   return mockTasks;
 }
 
-export async function getTask(id: string): Promise<Task | undefined> {
+export async function getTask(id: string): Promise<Task | null> {
   await delay();
-  return mockTasks.find((t) => t.id === id);
+  return mockTasks.find((t) => t.id === id) ?? null;
 }
 
 // ---- Subtasks ----
@@ -88,6 +90,18 @@ export async function getRiskSignals(taskId?: string): Promise<RiskSignal[]> {
     return mockRiskSignals.filter((r) => r.task_id === taskId);
   }
   return mockRiskSignals;
+}
+
+// ---- Agents ----
+
+export async function getAgents(): Promise<Agent[]> {
+  await delay();
+  return mockAgents;
+}
+
+export async function getAgent(id: string): Promise<Agent | undefined> {
+  await delay();
+  return mockAgents.find((a) => a.id === id);
 }
 
 // ---- Marketplace ----
