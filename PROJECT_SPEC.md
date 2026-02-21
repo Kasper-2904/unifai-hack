@@ -4,11 +4,11 @@
 Software teams lose time because project context is fragmented, task ownership is unclear, and delivery risks (merge conflicts, CI failures) are found too late.
 
 ## Product Vision
-A web platform where an Orchestration Agent (OA), human Project Manager (PM), developers, hosted autonomous agents, and a Reviewer Agent collaborate through one shared structured context.
+A web platform where an Orchestration Agent (OA), human Project Manager (PM), developers, MCP-connected specialist agents, and a Reviewer Agent collaborate through one shared structured context.
 
 The platform merges data from:
 - GitHub
-- Platform-hosted agents and task execution state
+- Agent execution state from MCP-connected agents
 
 ## Primary Users
 - Project Manager (human in the loop): collaborates with OA, selects project agents, and approves implementation plans.
@@ -27,7 +27,7 @@ The platform merges data from:
 ## Product Goals
 1. Centralize team/project context into a single structured context.
 2. Plan and distribute tasks with OA, with PM approval before execution.
-3. Execute subtasks using platform-hosted autonomous agents selected for the project.
+3. Execute subtasks using MCP-connected specialist agents selected for the project.
 4. Predict and prevent merge conflicts/CI failures before integration.
 5. Offer an Agent Marketplace where teams can use public agents or create their own.
 6. Monetize with seat-based subscriptions plus usage-based agent charging.
@@ -47,6 +47,17 @@ The platform merges data from:
 7. Assigned team member completes the final 30% and commits to GitHub.
 8. GitHub commit is detected; Reviewer Agent analyzes consistency/conflicts and updates shared context.
 9. Project context is enriched from outcomes so future agent runs improve.
+
+## Implementation Snapshot (Current)
+- Implemented:
+  - Auth, users, teams, projects, tasks, plans, subtasks, risks, dashboards APIs
+  - GitHub ingestion/sync endpoints and backend tests
+  - Marketplace and billing API scaffolding (Stripe/Paid.ai integrations)
+  - MCP client manager for agent connection/capability routing
+- In progress / partial:
+  - OA 70/30 specialist draft flow end-to-end enforcement
+  - Commit-triggered reviewer automation and full conflict analysis pipeline
+  - Frontend feature completeness for PM/developer workflows
 
 ## Task Ownership Rule
 - One task is assigned to exactly one team member.
@@ -71,7 +82,7 @@ The platform maintains structured shared context in explicit markdown documents:
 - Normalize all entities into a unified internal model.
 
 ### FR-2 Hosted Agent Registry and Project Agent Selection
-- Register/manage hosted agents in platform (no local agents in MVP).
+- Register/manage MCP-connected specialist agents in platform.
 - PM selects which agents are available per project.
 - Store metadata: owner/team, capabilities, supported task types, version, status, cost profile.
 
