@@ -12,6 +12,8 @@ import {
   getTeamMembers,
   getPlans,
   getRiskSignals,
+  getAgents,
+  getAgent,
   getMarketplaceCatalog,
   getMarketplaceAgent,
   getDeveloperDashboard,
@@ -42,9 +44,9 @@ describe("getTask", () => {
     expect(task!.id).toBe("task-1");
   });
 
-  it("returns undefined for an unknown id", async () => {
+  it("returns null for an unknown id", async () => {
     const task = await getTask("nonexistent");
-    expect(task).toBeUndefined();
+    expect(task).toBeNull();
   });
 });
 
@@ -137,6 +139,36 @@ describe("getRiskSignals", () => {
     for (const risk of risks) {
       expect(risk.task_id).toBe("task-2");
     }
+  });
+});
+
+describe("getAgents", () => {
+  it("returns an array of agents", async () => {
+    const agents = await getAgents();
+    expect(Array.isArray(agents)).toBe(true);
+    expect(agents.length).toBeGreaterThan(0);
+  });
+
+  it("each agent has required fields", async () => {
+    const agents = await getAgents();
+    for (const agent of agents) {
+      expect(agent).toHaveProperty("id");
+      expect(agent).toHaveProperty("name");
+      expect(agent).toHaveProperty("status");
+    }
+  });
+});
+
+describe("getAgent", () => {
+  it("returns an agent for a valid id", async () => {
+    const agent = await getAgent("agent-1");
+    expect(agent).toBeDefined();
+    expect(agent!.id).toBe("agent-1");
+  });
+
+  it("returns undefined for an unknown id", async () => {
+    const agent = await getAgent("nonexistent");
+    expect(agent).toBeUndefined();
   });
 });
 
