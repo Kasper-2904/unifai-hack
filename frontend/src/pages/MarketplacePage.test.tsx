@@ -8,6 +8,7 @@ import type { MarketplaceAgent } from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
   getMarketplaceCatalog: vi.fn(),
+  publishAgent: vi.fn(),
 }));
 
 const mockAgents: MarketplaceAgent[] = [

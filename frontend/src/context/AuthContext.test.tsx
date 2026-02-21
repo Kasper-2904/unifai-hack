@@ -7,6 +7,7 @@ import { loginUser, registerUser } from '@/lib/authApi'
 vi.mock('@/lib/authApi', () => ({
   loginUser: vi.fn(),
   registerUser: vi.fn(),
+  getCurrentUser: vi.fn().mockRejectedValue(new Error('not authenticated')),
 }))
 
 function Harness() {

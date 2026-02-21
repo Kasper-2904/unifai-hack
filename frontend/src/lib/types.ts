@@ -191,7 +191,7 @@ export interface Subtask {
 }
 
 export interface SubtaskDetail extends Subtask {
-  draft_content: Record<string, unknown> | null;
+  draft_content: string | Record<string, unknown> | null;
   draft_generated_at: string | null;
   draft_agent_id: string | null;
   final_content: Record<string, unknown> | null;

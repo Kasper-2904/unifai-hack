@@ -41,6 +41,8 @@ export default function MarketplacePage() {
   const [formDescription, setFormDescription] = useState("");
   const [formPricing, setFormPricing] = useState("free");
   const [formPrice, setFormPrice] = useState("");
+  const [formEndpoint, setFormEndpoint] = useState("");
+  const [formModel, setFormModel] = useState("");
 
   const filtered = agents?.filter((a) => {
     const matchesSearch = a.name.toLowerCase().includes(search.toLowerCase());
@@ -57,6 +59,9 @@ export default function MarketplacePage() {
         description: formDescription,
         pricing_type: formPricing,
         price_per_use: formPricing === "usage_based" ? parseFloat(formPrice) || 0 : null,
+        inference_provider: "custom",
+        inference_endpoint: formEndpoint,
+        inference_model: formModel,
       },
       {
         onSuccess: () => {
@@ -66,6 +71,8 @@ export default function MarketplacePage() {
           setFormDescription("");
           setFormPricing("free");
           setFormPrice("");
+          setFormEndpoint("");
+          setFormModel("");
         },
       }
     );
@@ -117,6 +124,16 @@ export default function MarketplacePage() {
                   <SelectItem value="usage_based">Usage Based</SelectItem>
                 </SelectContent>
               </Select>
+              <Input
+                placeholder="Inference endpoint URL"
+                value={formEndpoint}
+                onChange={(e) => setFormEndpoint(e.target.value)}
+              />
+              <Input
+                placeholder="Model name (optional)"
+                value={formModel}
+                onChange={(e) => setFormModel(e.target.value)}
+              />
               {formPricing === "usage_based" && (
                 <Input
                   placeholder="Price per use (e.g. 0.05)"
