@@ -23,10 +23,6 @@ A platform for software teams where a human PM collaborates with an Orchestratio
 ## Docker Standard (Team)
 - Backend: `http://localhost:8000`
 - Frontend: `http://localhost:5173`
-- Dummy agents:
-  - `http://localhost:8001`
-  - `http://localhost:8002`
-  - `http://localhost:8003`
 
 Run all services:
 ```bash

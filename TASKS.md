@@ -73,11 +73,17 @@
 ## Milestone 3: Marketplace & Billing
 
 ### M3-T1 Marketplace API & Stripe Integration (owner: Farhan)
-- Status: In Progress
+- Status: Done
 - Description: Build agent catalog APIs, Stripe seat checkout, and Stripe Connect.
 - Acceptance Criteria:
   - `MarketplaceAgent` catalog endpoints work.
   - Stripe subscriptions can be created via checkout session.
+- Notes:
+  - Marketplace endpoints: publish, catalog, subscribe
+  - Billing endpoints: purchase-agent, onboard-seller, seller-status, webhook
+  - Stripe Product/Price auto-created for paid agents
+  - Stripe Connect for seller payouts
+  - Webhook handler for checkout.session.completed and account.updated
 
 ### M3-T2 Paid.ai Usage Metering (owner: Kasper)
 - Status: In Progress
@@ -115,7 +121,7 @@
 - Acceptance Criteria:
   - Demo scenario data is easily loadable via script.
 - Notes:
-  - Seed script fixed and working (`uv run python scripts/seed_agents.py`)
+  - Seed script fixed and working (`uv run python scripts/seed_db.py`)
   - Skills refactored to use markdown files in `src/skills/`
   - Unit tests added for skills loading (15 tests passing)
 
