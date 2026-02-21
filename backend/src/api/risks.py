@@ -10,12 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.auth import get_current_user
 from src.api.schemas import (
+    ReviewerFinalizeRequest,
+    ReviewerFinalizeResponse,
     RiskSignalCreate,
     RiskSignalResolve,
     RiskSignalResponse,
 )
 from src.storage.database import get_db
-from src.storage.models import AuditLog, RiskSignal, User
+from src.storage.models import AuditLog, Project, RiskSignal, Task, User
 
 risks_router = APIRouter(prefix="/risks", tags=["Risk Signals"])
 reviewer_router = APIRouter(prefix="/reviewer", tags=["Reviewer Agent"])
@@ -118,3 +120,45 @@ async def get_reviewer_risks(
         )
     )
     return list(result.scalars().all())
+
+
+@reviewer_router.post(
+    "/finalize/{task_id}",
+    response_model=ReviewerFinalizeResponse,
+)
+async def finalize_task_review(
+    task_id: str,
+    body: ReviewerFinalizeRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Run the Reviewer Agent on a completed task.
+
+    Analyzes consistency, conflicts, quality, and returns merge-readiness.
+    Creates RiskSignal rows for any findings.
+    """
+    from src.services.reviewer_service import get_reviewer_service
+
+    # Verify task belongs to current user
+    task_result = await db.execute(
+        select(Task).where(Task.id == task_id, Task.created_by_id == current_user.id)
+    )
+    if not task_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    # Verify project belongs to current user
+    proj_result = await db.execute(
+        select(Project).where(
+            Project.id == body.project_id, Project.owner_id == current_user.id
+        )
+    )
+    if not proj_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    reviewer = get_reviewer_service()
+    try:
+        result = await reviewer.finalize_task(task_id, body.project_id, db)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    await db.commit()
+    return result

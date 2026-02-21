@@ -11,35 +11,56 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.auth import get_current_user
 from src.api.schemas import (
     PlanCreate,
+    PlanGenerate,
+    PlanGenerateResponse,
     PlanReject,
     PlanResponse,
     PlanSubmitForApproval,
 )
 from src.core.state import PlanStatus
 from src.storage.database import get_db
-from src.storage.models import AuditLog, Plan, User
+from src.storage.models import AuditLog, Plan, Project, Task, User
 
 plans_router = APIRouter(prefix="/plans", tags=["Plans"])
 
 
-@plans_router.post("/generate", response_model=PlanResponse, status_code=status.HTTP_201_CREATED)
+@plans_router.post("/generate", response_model=PlanGenerateResponse, status_code=status.HTTP_201_CREATED)
 async def generate_plan(
-    plan_data: PlanCreate,
+    plan_data: PlanGenerate,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> Plan:
-    """Generate a plan for a task (OA creates draft plan)."""
-    plan = Plan(
-        id=str(uuid4()),
-        task_id=plan_data.task_id,
-        project_id=plan_data.project_id,
-        plan_data=plan_data.plan_data,
-        status=PlanStatus.DRAFT.value,
+) -> dict[str, Any]:
+    """Generate a plan for a task using the OA (Claude + shared context)."""
+    from src.core.orchestrator import get_orchestrator
+
+    # Look up the task — scoped to current user
+    result = await db.execute(
+        select(Task).where(Task.id == plan_data.task_id, Task.created_by_id == current_user.id)
     )
-    db.add(plan)
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    # Verify project exists and belongs to current user
+    proj_result = await db.execute(
+        select(Project).where(
+            Project.id == plan_data.project_id, Project.owner_id == current_user.id
+        )
+    )
+    if not proj_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    orchestrator = get_orchestrator()
+    result_data = await orchestrator.generate_plan(
+        task_id=task.id,
+        task_title=task.title,
+        task_description=task.description or "",
+        project_id=plan_data.project_id,
+        db=db,
+    )
+
     await db.commit()
-    await db.refresh(plan)
-    return plan
+    return result_data
 
 
 @plans_router.post("/{plan_id}/approve", response_model=PlanResponse)
