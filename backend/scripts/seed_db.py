@@ -727,7 +727,7 @@ async def seed_database():
             usage = UsageRecord(
                 id=str(uuid4()),
                 team_id=team_id,
-                marketplace_agent_id=ma_ids[0],
+                marketplace_agent_id=list(ma_by_name.values())[0],
                 **entry,
             )
             session.add(usage)
