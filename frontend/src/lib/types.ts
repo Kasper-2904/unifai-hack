@@ -342,3 +342,24 @@ export interface ProjectAllowedAgent {
   created_at: string;
   agent: Agent;
 }
+
+// ---- Task Logs ----
+
+export interface TaskLog {
+  id: string;
+  task_id: string;
+  log_type: string;
+  agent_id: string | null;
+  agent_name: string | null;
+  message: string;
+  details: Record<string, unknown> | null;
+  sequence: number;
+  created_at: string;
+}
+
+export interface TaskLogsResponse {
+  task_id: string;
+  logs: TaskLog[];
+  has_more: boolean;
+  last_sequence: number;
+}

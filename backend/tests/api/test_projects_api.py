@@ -108,6 +108,46 @@ async def api_client(db_session: AsyncSession):
     app.dependency_overrides.clear()
 
 
+@pytest.mark.asyncio
+async def test_list_projects_returns_workspace_projects(db_session: AsyncSession):
+    owner = await _make_user(db_session, "owner_user", "owner@example.com")
+    viewer = await _make_user(db_session, "viewer_user", "viewer@example.com")
+
+    project_a_id = str(uuid4())
+    project_b_id = str(uuid4())
+
+    db_session.add(
+        Project(
+            id=project_a_id,
+            name="Workspace Project A",
+            owner_id=owner.id,
+        )
+    )
+    db_session.add(
+        Project(
+            id=project_b_id,
+            name="Workspace Project B",
+            owner_id=owner.id,
+        )
+    )
+    # Add viewer as a team member to both projects
+    db_session.add(
+        TeamMember(
+            id=str(uuid4()),
+            project_id=project_a_id,
+            user_id=viewer.id,
+        )
+    )
+    db_session.add(
+        TeamMember(
+            id=str(uuid4()),
+            project_id=project_b_id,
+            user_id=viewer.id,
+        )
+    )
+    await db_session.commit()
+
+
 class TestProjects:
     @pytest.mark.asyncio
     async def test_create_project(self, db_session: AsyncSession):
@@ -176,9 +216,7 @@ class TestProjects:
             db=db_session,
         )
 
-        fetched = await get_project(
-            project_id=project.id, current_user=user, db=db_session
-        )
+        fetched = await get_project(project_id=project.id, current_user=user, db=db_session)
 
         assert fetched.id == project.id
 
@@ -190,9 +228,7 @@ class TestProjects:
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_project(
-                project_id="nonexistent", current_user=user, db=db_session
-            )
+            await get_project(project_id="nonexistent", current_user=user, db=db_session)
 
         assert exc_info.value.status_code == 404
 
@@ -222,9 +258,7 @@ class TestProjects:
         db_session.add(plan)
         await db_session.commit()
 
-        tasks = await list_project_tasks(
-            project_id=project.id, current_user=user, db=db_session
-        )
+        tasks = await list_project_tasks(project_id=project.id, current_user=user, db=db_session)
 
         assert len(tasks) == 1
         assert tasks[0].title == "Linked Task"
@@ -248,9 +282,7 @@ class TestProjects:
         db_session.add(task)
         await db_session.commit()
 
-        tasks = await list_project_tasks(
-            project_id=project.id, current_user=user, db=db_session
-        )
+        tasks = await list_project_tasks(project_id=project.id, current_user=user, db=db_session)
 
         assert len(tasks) == 1
         assert tasks[0].title == "Direct Project Task"
@@ -331,9 +363,7 @@ class TestTaskCreation:
         assert task.created_by_id == admin_user.id
 
     @pytest.mark.asyncio
-    async def test_create_task_rejects_non_pm_member(
-        self, db_session: AsyncSession
-    ):
+    async def test_create_task_rejects_non_pm_member(self, db_session: AsyncSession):
         owner = await _make_user(db_session, "project_owner", "project_owner@test.com")
         developer = await _make_user(db_session, "dev_member", "dev_member@test.com")
         project = Project(id=str(uuid4()), name="Protected Project", owner_id=owner.id)
@@ -357,9 +387,7 @@ class TestTaskCreation:
         assert "PM or Admin" in exc_info.value.detail
 
     @pytest.mark.asyncio
-    async def test_create_task_hides_inaccessible_project(
-        self, db_session: AsyncSession
-    ):
+    async def test_create_task_hides_inaccessible_project(self, db_session: AsyncSession):
         owner = await _make_user(db_session, "private_owner", "private_owner@test.com")
         outsider = await _make_user(db_session, "outsider", "outsider@test.com")
         project = Project(id=str(uuid4()), name="Private Project", owner_id=owner.id)
@@ -404,9 +432,7 @@ class TestTaskCreation:
         assert exc_info.value.detail == "project_id and team_id must match when both are provided"
 
     @pytest.mark.asyncio
-    async def test_create_task_keeps_legacy_non_project_flow(
-        self, db_session: AsyncSession
-    ):
+    async def test_create_task_keeps_legacy_non_project_flow(self, db_session: AsyncSession):
         user = await _make_user(db_session, "legacy_user", "legacy_user@test.com")
         await db_session.commit()
 
@@ -455,7 +481,9 @@ class TestTaskCreation:
         client, context = api_client
         context["current_user"] = owner
 
-        response = await client.post("/api/v1/tasks", json={"description": "missing title and type"})
+        response = await client.post(
+            "/api/v1/tasks", json={"description": "missing title and type"}
+        )
 
         assert response.status_code == 422
         payload = response.json()
@@ -487,7 +515,9 @@ class TestTaskCreation:
         )
 
         assert response.status_code == 422
-        assert response.json()["detail"] == "project_id and team_id must match when both are provided"
+        assert (
+            response.json()["detail"] == "project_id and team_id must match when both are provided"
+        )
 
 
 class TestProjectAllowlist:

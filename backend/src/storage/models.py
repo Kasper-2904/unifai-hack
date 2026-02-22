@@ -589,7 +589,9 @@ class UsageRecord(Base):
     )
     marketplace_agent: Mapped["MarketplaceAgent | None"] = relationship("MarketplaceAgent")
 
-    usage_type: Mapped[str] = mapped_column(String(100))  # tool_call, plan_generation, reviewer_finalize
+    usage_type: Mapped[str] = mapped_column(
+        String(100)
+    )  # tool_call, plan_generation, reviewer_finalize
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     cost: Mapped[float] = mapped_column(Float, default=0.0)
 
@@ -598,5 +600,31 @@ class UsageRecord(Base):
     model_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     paid_signal_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TaskLog(Base):
+    """Stores real-time activity logs for tasks (agent outputs, status changes, etc.)."""
+
+    __tablename__ = "task_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("tasks.id"), index=True)
+
+    # Log type: agent_output, status_change, error, info, skill_execution
+    log_type: Mapped[str] = mapped_column(String(50))
+
+    # Which agent produced this log (if applicable)
+    agent_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("agents.id"), nullable=True)
+    agent_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Log content
+    message: Mapped[str] = mapped_column(Text)
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    # For streaming chunks, track sequence
+    sequence: Mapped[int] = mapped_column(Integer, default=0)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

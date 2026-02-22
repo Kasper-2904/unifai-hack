@@ -57,9 +57,7 @@ async def seed_database():
 
     async with async_session() as session:
         # Idempotency check — if already seeded, just refresh API keys
-        existing = await session.execute(
-            select(User).where(User.email == "admin@unifai.com")
-        )
+        existing = await session.execute(select(User).where(User.email == "admin@unifai.com"))
         if existing.scalar_one_or_none():
             if settings.anthropic_api_key:
                 await session.execute(
@@ -727,7 +725,7 @@ async def seed_database():
             usage = UsageRecord(
                 id=str(uuid4()),
                 team_id=team_id,
-                marketplace_agent_id=ma_ids[0],
+                marketplace_agent_id=ma_by_name["Claude Code Assistant"],
                 **entry,
             )
             session.add(usage)
@@ -758,7 +756,11 @@ async def seed_database():
                 },
             ],
             recent_commits=[
-                {"sha": "abc1234", "message": "feat: ProductCard component", "author": "dev_charlie"},
+                {
+                    "sha": "abc1234",
+                    "message": "feat: ProductCard component",
+                    "author": "dev_charlie",
+                },
                 {"sha": "def5678", "message": "fix: token refresh logic", "author": "dev_bob"},
                 {"sha": "ghi9012", "message": "chore: update CI config", "author": "dev_bob"},
             ],

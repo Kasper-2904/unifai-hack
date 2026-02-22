@@ -13,14 +13,16 @@ import { toApiErrorMessage } from '@/lib/apiClient'
 import { getProjectTasks } from '@/lib/api'
 import {
   addProjectAllowedAgent,
+  addMarketplaceAgentToProject,
   approvePlan,
   createPMTask,
   fetchPMDashboard,
+  getMarketplaceCatalogForProject,
   listOwnedAgents,
   rejectPlan,
   removeProjectAllowedAgent,
 } from '@/lib/pmApi'
-import { TaskStatus } from '@/lib/types'
+import { TaskStatus, type MarketplaceAgent } from '@/lib/types'
 
 const taskColumns = [
   { status: TaskStatus.PENDING, label: 'Pending', color: 'bg-slate-100' },
@@ -74,6 +76,7 @@ export default function ProjectDetailPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [selectedAgentId, setSelectedAgentId] = useState('')
+  const [marketplaceCategory, setMarketplaceCategory] = useState('')
   const [rejectingPlanId, setRejectingPlanId] = useState<string | null>(null)
   const [rejectionReason, setRejectionReason] = useState('')
   const [actionMessage, setActionMessage] = useState<string | null>(null)
@@ -101,12 +104,28 @@ export default function ProjectDetailPage() {
     enabled: Boolean(projectId),
   })
 
+  const marketplaceQuery = useQuery({
+    queryKey: ['marketplace-catalog', marketplaceCategory],
+    queryFn: () => getMarketplaceCatalogForProject(marketplaceCategory || undefined),
+    enabled: Boolean(projectId),
+  })
+
   const addAllowedAgentMutation = useMutation({
     mutationFn: (agentId: string) => addProjectAllowedAgent(projectId, agentId),
     onSuccess: () => {
       setActionMessage('Agent added to project allowlist.')
       setSelectedAgentId('')
       void queryClient.invalidateQueries({ queryKey: ['pm-dashboard', projectId] })
+      void queryClient.invalidateQueries({ queryKey: ['owned-agents'] })
+    },
+    onError: (error: unknown) => {
+      const message = toApiErrorMessage(error, 'Failed to add agent')
+      if (message.includes('already') || (error instanceof AxiosError && error.response?.status === 409)) {
+        setActionMessage('Agent is already in the allowlist.')
+        void queryClient.invalidateQueries({ queryKey: ['pm-dashboard', projectId] })
+      } else {
+        setActionMessage(message)
+      }
     },
   })
 
@@ -115,6 +134,31 @@ export default function ProjectDetailPage() {
     onSuccess: () => {
       setActionMessage('Agent removed from project allowlist.')
       void queryClient.invalidateQueries({ queryKey: ['pm-dashboard', projectId] })
+      void queryClient.invalidateQueries({ queryKey: ['owned-agents'] })
+      void queryClient.invalidateQueries({ queryKey: ['marketplace-catalog', marketplaceCategory] })
+    },
+    onError: (error: unknown) => {
+      setActionMessage(toApiErrorMessage(error, 'Failed to remove agent'))
+    },
+  })
+
+  const addMarketplaceAgentMutation = useMutation({
+    mutationFn: (agentId: string) => addMarketplaceAgentToProject(projectId, agentId),
+    onSuccess: () => {
+      setActionMessage('Marketplace agent added to project allowlist.')
+      void queryClient.invalidateQueries({ queryKey: ['pm-dashboard', projectId] })
+      void queryClient.invalidateQueries({ queryKey: ['marketplace-catalog', marketplaceCategory] })
+    },
+    onError: (error: unknown) => {
+      const message = toApiErrorMessage(error, 'Failed to add agent')
+      if (message.includes('already') || (error instanceof AxiosError && error.response?.status === 409)) {
+        setActionMessage('Agent is already in the allowlist.')
+        // Refresh to update the UI
+        void queryClient.invalidateQueries({ queryKey: ['pm-dashboard', projectId] })
+        void queryClient.invalidateQueries({ queryKey: ['marketplace-catalog', marketplaceCategory] })
+      } else {
+        setActionMessage(message)
+      }
     },
   })
 
@@ -166,6 +210,12 @@ export default function ProjectDetailPage() {
   const candidateAgents = useMemo(
     () => (agentsQuery.data ?? []).filter((agent) => !allowedAgentIds.has(agent.id)),
     [agentsQuery.data, allowedAgentIds],
+  )
+
+  // Filter marketplace agents that are not already in the allowlist
+  const candidateMarketplaceAgents = useMemo(
+    () => (marketplaceQuery.data ?? []).filter((agent: MarketplaceAgent) => !allowedAgentIds.has(agent.agent_id)),
+    [marketplaceQuery.data, allowedAgentIds],
   )
 
   if (!projectId) {
@@ -586,12 +636,47 @@ export default function ProjectDetailPage() {
 
         {/* Settings Tab */}
         <TabsContent value="settings" className="space-y-4">
+          {/* Current Agent Allowlist */}
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Agent Allowlist</CardTitle>
-              <CardDescription>Manage which agents can work on this project.</CardDescription>
+              <CardDescription>Agents currently allowed to work on this project.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {dashboard.allowed_agents.length === 0 ? (
+                <p className="text-sm text-slate-500">No agents allowed yet. Add agents from your owned agents or the marketplace below.</p>
+              ) : (
+                <div className="space-y-2">
+                  {dashboard.allowed_agents.map((entry) => (
+                    <div key={entry.id} className="flex items-center justify-between rounded-md border border-slate-200 p-3">
+                      <div>
+                        <p className="font-medium text-sm">{entry.agent.name}</p>
+                        <p className="text-xs text-slate-500">
+                          {entry.agent.role} - Added {formatDate(entry.created_at)}
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removeAllowedAgentMutation.mutate(entry.agent_id)}
+                        disabled={removeAllowedAgentMutation.isPending}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Add from Owned Agents */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Add from Your Agents</CardTitle>
+              <CardDescription>Add agents you own to this project.</CardDescription>
+            </CardHeader>
+            <CardContent>
               <form
                 className="flex flex-wrap items-center gap-2"
                 onSubmit={(e) => {
@@ -616,26 +701,94 @@ export default function ProjectDetailPage() {
                   Add Agent
                 </Button>
               </form>
+              {agentsQuery.isLoading && (
+                <p className="text-xs text-slate-400 mt-2">Loading your agents...</p>
+              )}
+              {!agentsQuery.isLoading && candidateAgents.length === 0 && (agentsQuery.data?.length ?? 0) === 0 && (
+                <p className="text-xs text-slate-400 mt-2">You don't have any agents yet. Create agents or add from the marketplace below.</p>
+              )}
+              {!agentsQuery.isLoading && candidateAgents.length === 0 && (agentsQuery.data?.length ?? 0) > 0 && (
+                <p className="text-xs text-slate-400 mt-2">All your agents are already in the allowlist.</p>
+              )}
+            </CardContent>
+          </Card>
 
-              {dashboard.allowed_agents.length === 0 ? (
-                <p className="text-sm text-slate-500">No agents allowed yet.</p>
+          {/* Add from Marketplace */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Add from Marketplace</CardTitle>
+              <CardDescription>Browse and add agents from the marketplace to this project.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Category Filter */}
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm"
+                  value={marketplaceCategory}
+                  onChange={(e) => setMarketplaceCategory(e.target.value)}
+                >
+                  <option value="">All Categories</option>
+                  <option value="coder">Coder</option>
+                  <option value="reviewer">Reviewer</option>
+                  <option value="designer">Designer</option>
+                  <option value="tester">Tester</option>
+                  <option value="devops">DevOps</option>
+                </select>
+                {marketplaceQuery.isLoading && (
+                  <span className="text-xs text-slate-500">Loading...</span>
+                )}
+              </div>
+
+              {/* Marketplace Agent Grid */}
+              {marketplaceQuery.isError ? (
+                <p className="text-sm text-red-600">Failed to load marketplace agents.</p>
+              ) : candidateMarketplaceAgents.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  {marketplaceQuery.isLoading
+                    ? 'Loading marketplace agents...'
+                    : 'No available marketplace agents found. All agents may already be in your allowlist.'}
+                </p>
               ) : (
-                <div className="space-y-2">
-                  {dashboard.allowed_agents.map((entry) => (
-                    <div key={entry.id} className="flex items-center justify-between rounded-md border border-slate-200 p-3">
-                      <div>
-                        <p className="font-medium text-sm">{entry.agent.name}</p>
-                        <p className="text-xs text-slate-500">
-                          {entry.agent.role} - Added {formatDate(entry.created_at)}
-                        </p>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {candidateMarketplaceAgents.map((agent: MarketplaceAgent) => (
+                    <div
+                      key={agent.id}
+                      className="rounded-lg border border-slate-200 p-3 hover:border-slate-300 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">{agent.name}</p>
+                          <p className="text-xs text-slate-500">{agent.category}</p>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          {agent.is_verified && (
+                            <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700">
+                              Verified
+                            </Badge>
+                          )}
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${
+                              agent.pricing_type === 'free'
+                                ? 'bg-green-50 text-green-700'
+                                : 'bg-amber-50 text-amber-700'
+                            }`}
+                          >
+                            {agent.pricing_type === 'free' ? 'Free' : `$${agent.price_per_use}/use`}
+                          </Badge>
+                        </div>
                       </div>
+                      {agent.description && (
+                        <p className="text-xs text-slate-600 mt-2 line-clamp-2">{agent.description}</p>
+                      )}
                       <Button
-                        variant="outline"
                         size="sm"
-                        onClick={() => removeAllowedAgentMutation.mutate(entry.agent_id)}
-                        disabled={removeAllowedAgentMutation.isPending}
+                        variant="outline"
+                        className="mt-3 w-full"
+                        disabled={addMarketplaceAgentMutation.isPending}
+                        onClick={() => addMarketplaceAgentMutation.mutate(agent.agent_id)}
                       >
-                        Remove
+                        Add to Project
                       </Button>
                     </div>
                   ))}
