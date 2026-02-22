@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.orchestrator import get_orchestrator
 from src.core.state import PlanStatus, TaskStatus
 from src.storage.database import AsyncSessionLocal as async_session_factory
-from src.storage.models import Plan, Task
+from src.storage.models import Plan, Subtask, Task
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +206,53 @@ class TaskScheduler:
                     task.status = TaskStatus.COMPLETED
                     task.progress = 1.0
                     task.result = orchestration_result
+
+                    # Write result to a subtask's draft_content so the Draft tab shows it.
+                    # Build draft from result text, falling back to step results.
+                    draft_text = orchestration_result.get("result") or ""
+                    if not draft_text:
+                        # Fallback: concatenate step results
+                        steps = orchestration_result.get("steps") or []
+                        parts = []
+                        for i, s in enumerate(steps, 1):
+                            skill = s.get("skill", "step")
+                            res = s.get("result", "")
+                            if res:
+                                parts.append(f"## Step {i}: {skill}\n{res}")
+                        draft_text = "\n\n".join(parts)
+                    if not draft_text:
+                        draft_text = "Orchestration completed (no text output)."
+
+                    draft_payload = {
+                        "output": draft_text,
+                        "type": "orchestrator_output",
+                    }
+
+                    sub_result = await session.execute(
+                        select(Subtask)
+                        .where(Subtask.task_id == task_id)
+                        .order_by(Subtask.created_at)
+                        .limit(1)
+                    )
+                    first_subtask = sub_result.scalar_one_or_none()
+                    if first_subtask:
+                        first_subtask.draft_content = draft_payload
+                        first_subtask.status = "draft_generated"
+                        first_subtask.draft_generated_at = datetime.utcnow()
+                    else:
+                        # No subtask exists — create one to hold the draft
+                        from uuid import uuid4
+                        new_subtask = Subtask(
+                            id=str(uuid4()),
+                            task_id=task_id,
+                            title="Orchestrator Output",
+                            description="Auto-generated from orchestrator execution",
+                            priority=1,
+                            status="draft_generated",
+                            draft_content=draft_payload,
+                            draft_generated_at=datetime.utcnow(),
+                        )
+                        session.add(new_subtask)
                 else:
                     task.status = TaskStatus.FAILED
                     task.error = orchestration_result.get("error")

@@ -83,6 +83,7 @@ export default function ProjectDetailPage() {
   const [newTaskTitle, setNewTaskTitle] = useState('')
   const [newTaskType, setNewTaskType] = useState(taskTypeOptions[0].value)
   const [newTaskDescription, setNewTaskDescription] = useState('')
+  const [newTaskAgentId, setNewTaskAgentId] = useState('')
   const [taskCreateError, setTaskCreateError] = useState<string | null>(null)
   const [approvingPlanId, setApprovingPlanId] = useState<string | null>(null)
   const projectId = id ?? ''
@@ -199,11 +200,13 @@ export default function ProjectDetailPage() {
         task_type: newTaskType,
         description: newTaskDescription.trim() || undefined,
         project_id: projectId,
+        assigned_agent_id: newTaskAgentId || undefined,
       }),
     onSuccess: () => {
       setNewTaskTitle('')
       setNewTaskType(taskTypeOptions[0].value)
       setNewTaskDescription('')
+      setNewTaskAgentId('')
       setTaskCreateError(null)
       setActionMessage('Task created successfully.')
       void queryClient.invalidateQueries({ queryKey: ['project-tasks', projectId] })
@@ -359,7 +362,7 @@ export default function ProjectDetailPage() {
                   required
                 />
 
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-3 md:grid-cols-3">
                   <select
                     className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm"
                     value={newTaskType}
@@ -370,6 +373,20 @@ export default function ProjectDetailPage() {
                     {taskTypeOptions.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm"
+                    value={newTaskAgentId}
+                    onChange={(event) => setNewTaskAgentId(event.target.value)}
+                    disabled={createTaskMutation.isPending}
+                  >
+                    <option value="">Auto-assign (orchestrator picks)</option>
+                    {(dashboard?.allowed_agents ?? []).map((entry) => (
+                      <option key={entry.agent_id} value={entry.agent_id}>
+                        {entry.agent.name} ({entry.agent.role})
                       </option>
                     ))}
                   </select>
