@@ -267,6 +267,20 @@ export interface MarketplaceAgent {
   is_active: boolean;
 }
 
+export interface MarketplacePublishRequest {
+  name: string;
+  category: string;
+  description?: string;
+  pricing_type: PricingType;
+  price_per_use: number | null;
+  inference_provider: string;
+  inference_endpoint: string;
+  access_token: string;
+  inference_model?: string | null;
+  system_prompt?: string | null;
+  skills?: string[];
+}
+
 export interface Plan {
   id: string;
   task_id: string;

@@ -9,6 +9,7 @@ import type {
   Agent,
   DeveloperDashboard,
   MarketplaceAgent,
+  MarketplacePublishRequest,
   Plan,
   Project,
   RiskSignal,
@@ -220,18 +221,7 @@ export async function getMarketplaceAgent(id: string): Promise<MarketplaceAgent 
   }
 }
 
-export async function publishAgent(agentData: {
-  name: string
-  category: string
-  description: string
-  pricing_type: string
-  price_per_use: number | null
-  inference_provider: string
-  inference_endpoint: string
-  inference_model: string
-  system_prompt?: string
-  skills?: string[]
-}): Promise<MarketplaceAgent> {
+export async function publishAgent(agentData: MarketplacePublishRequest): Promise<MarketplaceAgent> {
   const { data } = await apiClient.post<MarketplaceAgent>('/marketplace/publish', agentData)
   return data
 }
