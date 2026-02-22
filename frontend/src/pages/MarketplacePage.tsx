@@ -18,8 +18,8 @@ import {
 import { AgentCard } from "@/components/shared/AgentCard";
 import { useMarketplaceCatalog, usePublishAgent } from "@/hooks/use-api";
 import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "@/lib/apiClient";
-import type { Team, Project, MarketplaceAgent } from "@/lib/types";
+import { apiClient, toApiErrorMessage } from "@/lib/apiClient";
+import type { Team, Project, MarketplaceAgent, PricingType } from "@/lib/types";
 
 const categoryOptions = [
   { value: "all", label: "All Categories" },
@@ -65,6 +65,7 @@ export default function MarketplacePage() {
   const [formModel, setFormModel] = useState("");
   const [formSystemPrompt, setFormSystemPrompt] = useState("");
   const [formSkills, setFormSkills] = useState("");
+  const [publishMessage, setPublishMessage] = useState<string | null>(null);
 
   // Fetch projects for selected team
   const { data: projects } = useQuery<Project[]>({
@@ -83,25 +84,50 @@ export default function MarketplacePage() {
     return matchesSearch && matchesCategory;
   });
 
+  function getPublishErrorMessage(error: unknown): string {
+    const apiMessage = toApiErrorMessage(error, "Could not publish agent. Please try again.");
+    if (apiMessage.toLowerCase().includes("field required")) {
+      return "Missing required publish details. Add endpoint URL and API token, then try again.";
+    }
+    return apiMessage;
+  }
+
   function handlePublish() {
-    if (!formName.trim() || !formEndpoint.trim()) return;
+    if (!formName.trim()) {
+      setPublishMessage("Agent name is required.");
+      return;
+    }
+    if (!formEndpoint.trim()) {
+      setPublishMessage("API endpoint is required.");
+      return;
+    }
+    if (!formToken.trim()) {
+      setPublishMessage("API token is required so we can call your agent.");
+      return;
+    }
+
+    setPublishMessage(null);
     publishMutation.mutate(
       {
-        name: formName,
+        name: formName.trim(),
         category: formCategory,
-        description: formDescription,
-        pricing_type: formPricing,
+        description: formDescription.trim() || undefined,
+        pricing_type: formPricing as PricingType,
         price_per_use: formPricing === "usage_based" ? parseFloat(formPrice) || 0 : null,
         inference_provider: formProvider,
-        inference_endpoint: formEndpoint,
-        inference_model: formModel,
-        system_prompt: formSystemPrompt,
+        inference_endpoint: formEndpoint.trim(),
+        access_token: formToken.trim(),
+        inference_model: formModel.trim() || undefined,
+        system_prompt: formSystemPrompt.trim() || undefined,
         skills: formSkills.split(",").map((s) => s.trim()).filter(Boolean),
       },
       {
         onSuccess: () => {
           setDialogOpen(false);
           resetForm();
+        },
+        onError: (error) => {
+          setPublishMessage(getPublishErrorMessage(error));
         },
       }
     );
@@ -119,6 +145,7 @@ export default function MarketplacePage() {
     setFormModel("");
     setFormSystemPrompt("");
     setFormSkills("");
+    setPublishMessage(null);
   }
 
   async function handleAddToProject() {
@@ -238,7 +265,7 @@ export default function MarketplacePage() {
                 </div>
 
                 <div className="mt-3">
-                  <label className="text-sm font-medium text-slate-700">API Token</label>
+                  <label className="text-sm font-medium text-slate-700">API Token *</label>
                   <Input
                     placeholder="Token for authenticating with your agent"
                     type="password"
@@ -298,10 +325,15 @@ export default function MarketplacePage() {
               <Button
                 className="w-full"
                 onClick={handlePublish}
-                disabled={!formName.trim() || !formEndpoint.trim() || publishMutation.isPending}
+                disabled={!formName.trim() || !formEndpoint.trim() || !formToken.trim() || publishMutation.isPending}
               >
                 {publishMutation.isPending ? "Publishing..." : "Publish Agent"}
               </Button>
+              {publishMessage && (
+                <p className="text-sm text-slate-600" role="status">
+                  {publishMessage}
+                </p>
+              )}
             </div>
           </DialogContent>
         </Dialog>

@@ -154,8 +154,9 @@
 ## Milestone 5: MVP Review Hardening
 
 ### M5-T1 Marketplace Publish Flow Error Fix (owner: Martin)
-- Status: Todo
+- Status: Done
 - Description: Investigate and fix frontend publish flow errors shown in browser console when publishing an agent in the marketplace.
+- Notes: 2026-02-22 - Fixed marketplace publish request contract mismatch by sending required `access_token` from frontend, added client-side required-field checks, and added actionable non-technical publish error messaging; updated `MarketplacePage` tests to cover required publish payload and user-facing error states.
 - Acceptance Criteria:
   - Publish flow completes without uncaught frontend console errors.
   - Error states shown to users are actionable and non-technical.
