@@ -7,8 +7,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.services.llm_service import TokenUsage
 from src.services.reviewer_service import ReviewerService
 from src.storage.models import Project, RiskSignal, Task, User
+
+MOCK_TOKEN_USAGE = TokenUsage(input_tokens=500, output_tokens=200, model="claude-sonnet-4-20250514")
 
 
 # ============== Helpers ==============
@@ -76,7 +79,7 @@ async def test_reviewer_happy_path(db_session: AsyncSession):
     task = await _make_task(db_session, user.id)
 
     mock_llm = AsyncMock()
-    mock_llm.complete_json = AsyncMock(return_value=MOCK_REVIEW_RESPONSE)
+    mock_llm.complete_json = AsyncMock(return_value=(MOCK_REVIEW_RESPONSE, MOCK_TOKEN_USAGE))
 
     reviewer = ReviewerService(llm=mock_llm)
     result = await reviewer.finalize_task(task.id, project.id, db_session)
@@ -95,7 +98,7 @@ async def test_reviewer_creates_risk_signals(db_session: AsyncSession):
     task = await _make_task(db_session, user.id)
 
     mock_llm = AsyncMock()
-    mock_llm.complete_json = AsyncMock(return_value=MOCK_REVIEW_RESPONSE)
+    mock_llm.complete_json = AsyncMock(return_value=(MOCK_REVIEW_RESPONSE, MOCK_TOKEN_USAGE))
 
     reviewer = ReviewerService(llm=mock_llm)
     await reviewer.finalize_task(task.id, project.id, db_session)
@@ -164,7 +167,7 @@ async def test_reviewer_blocker_findings(db_session: AsyncSession):
     }
 
     mock_llm = AsyncMock()
-    mock_llm.complete_json = AsyncMock(return_value=blocker_response)
+    mock_llm.complete_json = AsyncMock(return_value=(blocker_response, MOCK_TOKEN_USAGE))
 
     reviewer = ReviewerService(llm=mock_llm)
     result = await reviewer.finalize_task(task.id, project.id, db_session)

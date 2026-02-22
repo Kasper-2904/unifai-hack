@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config import get_settings
+from src.config import calculate_token_cost, get_settings
 from src.storage.models import UsageRecord
 
 logger = logging.getLogger(__name__)
@@ -132,11 +132,31 @@ class PaidService:
         marketplace_agent_id: str | None = None,
         data: dict[str, Any] | None = None,
         cost: float = 0.0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        model_name: str | None = None,
     ) -> UsageRecord:
         """Record usage both locally (DB) and remotely (Paid.ai).
 
         Caller should check_usage_limit() first if they want to enforce limits.
+        If input_tokens/output_tokens are provided and cost is 0, cost is auto-calculated.
         """
+        # Auto-calculate cost from tokens for Anthropic/Claude models only
+        if cost == 0.0 and (input_tokens or output_tokens):
+            model_lower = (model_name or "").lower()
+            if not model_name or "anthropic" in model_lower or "claude" in model_lower:
+                cost = calculate_token_cost(input_tokens, output_tokens)
+
+        # Merge token data into the Paid.ai signal payload
+        signal_data = dict(data) if data else {}
+        if input_tokens or output_tokens:
+            signal_data["input_tokens"] = input_tokens
+            signal_data["output_tokens"] = output_tokens
+            signal_data["total_tokens"] = input_tokens + output_tokens
+            signal_data["cost_usd"] = cost
+            if model_name:
+                signal_data["model"] = model_name
+
         paid_signal_id = None
         if self._enabled and team_id:
             customer_id = self._ensure_customer(team_id)
@@ -145,7 +165,7 @@ class PaidService:
                 paid_signal_id = self._send_signal(
                     team_id=team_id,
                     event_name="agent_execution",
-                    data=data,
+                    data=signal_data,
                 )
 
         record = UsageRecord(
@@ -156,6 +176,9 @@ class PaidService:
             usage_type=usage_type,
             quantity=1,
             cost=cost,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            model_name=model_name,
             paid_signal_id=paid_signal_id,
         )
         db.add(record)

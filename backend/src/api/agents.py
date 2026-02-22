@@ -199,14 +199,14 @@ async def chat_with_agent(
     # Use override or default system prompt
     system_prompt = request.system_prompt_override or agent.system_prompt
 
-    response = await inference_service.chat(
+    response, token_usage = await inference_service.chat(
         agent=agent,
         message=request.message,
         conversation_history=request.conversation_history,
         system_prompt=system_prompt,
     )
 
-    # Track usage
+    # Track usage with token data
     try:
         await paid_service.track_usage(
             db=db,
@@ -214,6 +214,9 @@ async def chat_with_agent(
             user_id=current_user.id,
             usage_type="chat",
             data={"agent_id": agent_id, "team_id": request.team_id},
+            input_tokens=token_usage.input_tokens,
+            output_tokens=token_usage.output_tokens,
+            model_name=token_usage.model,
         )
     except Exception as e:
         logger.warning("Usage tracking failed in chat: %s", e)
@@ -272,14 +275,14 @@ async def execute_agent_skill(
     # Use override or default system prompt
     system_prompt = request.system_prompt_override or agent.system_prompt
 
-    result_text = await inference_service.execute_skill(
+    result_text, token_usage = await inference_service.execute_skill(
         agent=agent,
         skill=request.skill,
         inputs=request.inputs,
         system_prompt=system_prompt,
     )
 
-    # Track usage
+    # Track usage with token data
     try:
         await paid_service.track_usage(
             db=db,
@@ -287,6 +290,9 @@ async def execute_agent_skill(
             user_id=current_user.id,
             usage_type="skill_execution",
             data={"agent_id": agent_id, "team_id": request.team_id, "skill": request.skill},
+            input_tokens=token_usage.input_tokens,
+            output_tokens=token_usage.output_tokens,
+            model_name=token_usage.model,
         )
     except Exception as e:
         logger.warning("Usage tracking failed in skill execution: %s", e)

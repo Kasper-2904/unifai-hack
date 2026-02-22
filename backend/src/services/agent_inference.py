@@ -7,6 +7,8 @@ from typing import Any
 import httpx
 import litellm
 
+from src.services.llm_service import TokenUsage
+
 
 # Skills directory path
 SKILLS_DIR = Path(__file__).parent.parent / "skills"
@@ -48,18 +50,12 @@ class AgentInferenceService:
         message: str,
         conversation_history: list[dict] | None = None,
         system_prompt: str | None = None,
-    ) -> str:
+    ) -> tuple[str, TokenUsage]:
         """
         Send a chat message to a hosted agent.
 
-        Args:
-            agent: Agent model with inference config
-            message: User's message
-            conversation_history: Previous messages
-            system_prompt: System prompt (override or from agent)
-
         Returns:
-            Agent's response
+            Tuple of (response text, token usage)
         """
         messages = []
 
@@ -87,7 +83,7 @@ class AgentInferenceService:
             # "custom", "openai-compatible", or any other provider
             return await self._call_custom_endpoint(agent, messages)
 
-    async def _call_litellm(self, agent: Any, messages: list[dict]) -> str:
+    async def _call_litellm(self, agent: Any, messages: list[dict]) -> tuple[str, TokenUsage]:
         """Call via LiteLLM for standard providers."""
         provider = agent.inference_provider
         model = agent.inference_model or "gpt-4o-mini"
@@ -107,16 +103,18 @@ class AgentInferenceService:
                 messages=messages,
                 api_key=api_key,
             )
-            return response.choices[0].message.content or ""
+            text = response.choices[0].message.content or ""
+            usage = TokenUsage(
+                input_tokens=getattr(response.usage, "prompt_tokens", 0) or 0,
+                output_tokens=getattr(response.usage, "completion_tokens", 0) or 0,
+                model=model_str,
+            )
+            return text, usage
         except Exception as e:
-            return f"Error calling agent: {e}"
+            return f"Error calling agent: {e}", TokenUsage(model=model_str)
 
-    async def _call_crusoe(self, agent: Any, messages: list[dict]) -> str:
-        """
-        Call Crusoe Cloud inference API.
-
-        Uses OpenAI-compatible format with Crusoe's endpoint.
-        """
+    async def _call_crusoe(self, agent: Any, messages: list[dict]) -> tuple[str, TokenUsage]:
+        """Call Crusoe Cloud inference API."""
         from src.config import get_settings
 
         settings = get_settings()
@@ -125,7 +123,7 @@ class AgentInferenceService:
         model = agent.inference_model or "NVFP4/Qwen3-235B-A22B-Instruct-2507-FP4"
 
         if not api_key:
-            return "Error: No Crusoe API key configured"
+            return "Error: No Crusoe API key configured", TokenUsage(model=model)
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -149,31 +147,36 @@ class AgentInferenceService:
                 )
                 response.raise_for_status()
                 data = response.json()
-                return data["choices"][0]["message"]["content"]
+                text = data["choices"][0]["message"]["content"]
+                # Best-effort token extraction from OpenAI-compatible response
+                raw_usage = data.get("usage", {})
+                usage = TokenUsage(
+                    input_tokens=raw_usage.get("prompt_tokens", 0) or 0,
+                    output_tokens=raw_usage.get("completion_tokens", 0) or 0,
+                    model=model,
+                )
+                return text, usage
             except httpx.HTTPStatusError as e:
                 return (
-                    f"Error calling Crusoe API (HTTP {e.response.status_code}): {e.response.text}"
+                    f"Error calling Crusoe API (HTTP {e.response.status_code}): {e.response.text}",
+                    TokenUsage(model=model),
                 )
             except httpx.RequestError as e:
-                return f"Error connecting to Crusoe API: {e}"
+                return f"Error connecting to Crusoe API: {e}", TokenUsage(model=model)
             except Exception as e:
-                return f"Error calling Crusoe API: {e}"
+                return f"Error calling Crusoe API: {e}", TokenUsage(model=model)
 
-    async def _call_custom_endpoint(self, agent: Any, messages: list[dict]) -> str:
-        """
-        Call seller-hosted OpenAI-compatible endpoint.
-
-        Uses the seller's access token for authentication.
-        """
+    async def _call_custom_endpoint(self, agent: Any, messages: list[dict]) -> tuple[str, TokenUsage]:
+        """Call seller-hosted OpenAI-compatible endpoint."""
         endpoint = agent.inference_endpoint
         access_token = agent.inference_api_key_encrypted  # Seller's access token
         model = agent.inference_model or "default"
 
         if not endpoint:
-            return "Error: No inference endpoint configured for this agent"
+            return "Error: No inference endpoint configured for this agent", TokenUsage(model=model)
 
         if not access_token:
-            return "Error: No access token configured for this agent"
+            return "Error: No access token configured for this agent", TokenUsage(model=model)
 
         # Build headers with seller's access token
         headers = {
@@ -197,15 +200,24 @@ class AgentInferenceService:
                 )
                 response.raise_for_status()
                 data = response.json()
-                return data["choices"][0]["message"]["content"]
+                text = data["choices"][0]["message"]["content"]
+                # Best-effort token extraction
+                raw_usage = data.get("usage", {})
+                usage = TokenUsage(
+                    input_tokens=raw_usage.get("prompt_tokens", 0) or 0,
+                    output_tokens=raw_usage.get("completion_tokens", 0) or 0,
+                    model=model,
+                )
+                return text, usage
             except httpx.HTTPStatusError as e:
                 return (
-                    f"Error calling seller agent (HTTP {e.response.status_code}): {e.response.text}"
+                    f"Error calling seller agent (HTTP {e.response.status_code}): {e.response.text}",
+                    TokenUsage(model=model),
                 )
             except httpx.RequestError as e:
-                return f"Error connecting to seller agent at {endpoint}: {e}"
+                return f"Error connecting to seller agent at {endpoint}: {e}", TokenUsage(model=model)
             except Exception as e:
-                return f"Error calling seller agent: {e}"
+                return f"Error calling seller agent: {e}", TokenUsage(model=model)
 
     def _build_skill_user_prompt(self, skill: str, inputs: dict[str, Any]) -> str:
         """Build the user prompt with inputs for a skill."""
@@ -227,21 +239,12 @@ class AgentInferenceService:
         skill: str,
         inputs: dict[str, Any],
         system_prompt: str | None = None,
-    ) -> str:
+    ) -> tuple[str, TokenUsage]:
         """
         Execute a specific skill on the agent.
 
-        Skills are loaded from markdown files in the skills directory.
-        The markdown content becomes part of the system prompt.
-
-        Args:
-            agent: Agent model with inference config
-            skill: Name of the skill to execute
-            inputs: Input parameters for the skill
-            system_prompt: Optional override for system prompt
-
         Returns:
-            Agent's response
+            Tuple of (response text, token usage)
         """
         # Load skill prompt from markdown file
         skill_prompt = self._get_skill_prompt(skill)
