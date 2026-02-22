@@ -27,7 +27,7 @@ import {
   getTeamMembers,
   publishAgent,
 } from "@/lib/api";
-import type { TaskLog, TaskReasoningLog, TaskReasoningLogStreamEvent } from "@/lib/types";
+import type { TaskLog, TaskReasoningLog, TaskReasoningLogStreamEvent, SubtaskDetail } from "@/lib/types";
 
 export function useTasks() {
   return useQuery({ queryKey: ["tasks"], queryFn: getTasks });
@@ -144,11 +144,18 @@ export function useTaskReasoningLogs(taskId: string) {
   };
 }
 
-export function useSubtasks(taskId: string) {
+export function useSubtasks(taskId: string, pollInterval: number = 2000) {
   return useQuery({
     queryKey: ["subtasks", taskId],
     queryFn: () => getSubtasks(taskId),
     enabled: !!taskId,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return false;
+      const hasDraft = data.some((s: SubtaskDetail) => s.draft_content !== null);
+      if (hasDraft) return false;
+      return pollInterval;
+    },
   });
 }
 

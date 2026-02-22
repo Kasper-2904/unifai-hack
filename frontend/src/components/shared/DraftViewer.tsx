@@ -20,8 +20,9 @@ export function DraftViewer({ content, generatedAt, agentId }: DraftViewerProps)
     );
   }
 
-  const language = typeof content === "string" ? "text" : ((content.language as string) ?? "text");
-  const code = typeof content === "string" ? content : ((content.code as string) ?? JSON.stringify(content, null, 2));
+  const contentObj = typeof content === "string" ? null : content;
+  const language = typeof content === "string" ? "text" : ((contentObj?.language as string) ?? "text");
+  const code = typeof content === "string" ? content : ((contentObj?.code as string) ?? ((contentObj?.output as string) ?? JSON.stringify(content, null, 2)));
 
   return (
     <Card>
