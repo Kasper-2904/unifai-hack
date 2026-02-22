@@ -215,8 +215,20 @@
   - Integration test covers task + subtask coordinated execution.
 
 ### M5-T8 PM Can Create Tasks via Tasks API Flow (owner: Marin)
-- Status: Todo
+- Status: In Progress
 - Description: Enable PM creation flow wired to `POST /api/v1/tasks` with proper frontend entry point and role handling.
+- Notes: 2026-02-22 - Implementation prep completed with M5-T8-ST0 (single branch setup + scoped subtask plan + agent prompt pack in `prompts/`).
+- Notes: 2026-02-22 - Implemented ST1-ST4: backend project-scoped PM role enforcement for `POST /tasks` (owner/PM/admin/superuser), stable 404/403 handling, direct project linkage in `/projects/{id}/tasks`, and PM Tasks-tab creation form with typed client wiring + loading/success/error UX.
+- Notes: 2026-02-22 - Implemented ST5-ST7 test coverage and quality gates: backend tests now cover PM/admin/owner create-task authorization, inaccessible-project and payload validation errors (including API-level 422 for missing required fields and project/team mismatch), direct project linkage visibility, and legacy non-project creation; frontend tests now cover PM create-task success with task-board refresh trigger, loading disabled states, backend 422/403 messaging, and task-board rendering safety. Quality gates pass with `cd backend && .venv/bin/pytest` and `cd frontend && npm run lint && npm run build && npm run test`.
+- Subtasks:
+  - M5-T8-ST0 (owner: Marin) - Done - Prepare branch, subtasks, and agent prompts.
+  - M5-T8-ST1 (owner: Farhan) - Done - Backend task creation contract hardening: require PM/Admin role for project-scoped task creation, validate project/task ownership boundaries, and return stable authorization/validation errors.
+  - M5-T8-ST2 (owner: Farhan) - Done - Ensure PM-created tasks are linked into project task flow so PM dashboard task board reflects newly created tasks without manual DB intervention.
+  - M5-T8-ST3 (owner: Martin) - Done - Add PM task creation entry point in PM project detail UI (`ProjectDetailPage`) and wire submit to `POST /api/v1/tasks`.
+  - M5-T8-ST4 (owner: Martin) - Done - Add frontend PM task-creation client/types/form UX states (loading/success/error/validation) with clear non-technical messages.
+  - M5-T8-ST5 (owner: Marin) - Done - Added backend tests for owner/PM/admin happy path, non-PM denial, inaccessible project 404 behavior, missing required-field 422 response, project/team mismatch 422 response, project linkage discoverability via project task listing, and legacy non-project creation regression.
+  - M5-T8-ST6 (owner: Marin) - Done - Added frontend PM project-detail tests for create-task submit success with refresh trigger + success banner, loading-disabled submit state, missing-title submit prevention, backend 422 validation messaging, and permission-denied messaging while task board remains functional.
+  - M5-T8-ST7 (owner: Marin) - Done - Completed review pass and executed quality gates (`cd backend && .venv/bin/pytest`, `cd frontend && npm run lint && npm run build && npm run test`) successfully.
 - Acceptance Criteria:
   - PM can create a task end-to-end from UI/API flow.
   - Authorization and validation errors are surfaced clearly.

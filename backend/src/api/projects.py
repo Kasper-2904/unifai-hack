@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.api.auth import get_current_user
+from src.api.auth import get_current_user, require_pm_role_for_project
 from src.api.schemas import (
     ProjectAllowedAgentResponse,
     ProjectCreate,
@@ -95,14 +95,16 @@ async def list_project_tasks(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[Task]:
-    """List tasks linked to a project via plans."""
+    """List project tasks from both plan links and direct project-scoped creation."""
     from src.storage.models import Plan
 
     # Get task IDs from plans for this project
     task_ids_query = select(Plan.task_id).where(Plan.project_id == project_id)
 
     result = await db.execute(
-        select(Task).where(Task.id.in_(task_ids_query)).order_by(Task.created_at.desc())
+        select(Task)
+        .where((Task.id.in_(task_ids_query)) | (Task.team_id == project_id))
+        .order_by(Task.created_at.desc())
     )
     return list(result.scalars().all())
 
@@ -232,6 +234,16 @@ async def create_task(
     Otherwise, the orchestrator will choose an appropriate agent.
     """
     event_bus = get_event_bus()
+    project_scope_id = task_data.project_id or task_data.team_id
+
+    if task_data.project_id and task_data.team_id and task_data.project_id != task_data.team_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="project_id and team_id must match when both are provided",
+        )
+
+    if project_scope_id:
+        await require_pm_role_for_project(db, current_user, project_scope_id)
 
     task = Task(
         id=str(uuid4()),
@@ -239,7 +251,7 @@ async def create_task(
         description=task_data.description,
         task_type=task_data.task_type,
         input_data=task_data.input_data,
-        team_id=task_data.team_id,
+        team_id=project_scope_id,
         assigned_agent_id=task_data.assigned_agent_id,
         created_by_id=current_user.id,
         status=TaskStatus.PENDING,

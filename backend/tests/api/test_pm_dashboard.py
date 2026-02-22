@@ -229,7 +229,8 @@ async def test_pm_plan_approval_success_requires_owner_and_creates_audit_log(db_
 
     with pytest.raises(HTTPException) as exc:
         await approve_plan(plan.id, current_user=outsider, db=db_session)
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Project not found"
 
     approved = await approve_plan(plan.id, current_user=owner, db=db_session)
     assert approved.status == PlanStatus.APPROVED.value
@@ -281,7 +282,8 @@ async def test_pm_plan_reject_success_requires_owner_and_creates_audit_log(db_se
             current_user=outsider,
             db=db_session,
         )
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Project not found"
 
     rejected = await reject_plan(
         plan.id,
