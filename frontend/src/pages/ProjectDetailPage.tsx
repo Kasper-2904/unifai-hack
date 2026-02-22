@@ -10,7 +10,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ProgressBar } from '@/components/shared/ProgressBar'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { toApiErrorMessage } from '@/lib/apiClient'
-import { AxiosError } from 'axios'
 import { getProjectTasks } from '@/lib/api'
 import {
   addProjectAllowedAgent,
