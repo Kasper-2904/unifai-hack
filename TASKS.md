@@ -160,7 +160,7 @@
   - Publish flow completes without uncaught frontend console errors.
   - Error states shown to users are actionable and non-technical.
 
-### M5-T2 PM Approval Must Trigger Task Assignment (owner: Kasper)
+### M5-T2 PM Approval Must Trigger Task Assignment (owner: Farhan)
 - Status: Todo
 - Description: Fix orchestration transition so PM plan approval reliably starts assignment/execution flow.
 - Acceptance Criteria:
@@ -216,7 +216,7 @@
   - Token usage per LLM call is captured and emitted to Paid.ai payloads.
   - Billing summary reflects token-driven usage costs.
 
-### M5-T10 GitHub Sync Must Auto-Refresh Shared Context Files (owner: Farhan)
+### M5-T10 GitHub Sync Must Auto-Refresh Shared Context Files (owner: Kasper)
 - Status: Todo
 - Description: Ensure GitHub ingestion automatically refreshes internal context and populates canonical `docs/shared_context/*.md` context files.
 - Acceptance Criteria:
