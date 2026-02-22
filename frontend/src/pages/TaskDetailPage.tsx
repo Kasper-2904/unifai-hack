@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, Link } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
@@ -20,7 +20,8 @@ import {
   useTaskLogs,
 } from '@/hooks/use-api'
 import { updateTaskStatus, startTask } from '@/lib/api'
-import { TaskStatus, type SubtaskDetail, type TaskReasoningLog } from '@/lib/types'
+import { approvePlan, generatePlan, rejectPlan } from '@/lib/pmApi'
+import { PlanStatus, TaskStatus, type SubtaskDetail, type TaskReasoningLog } from '@/lib/types'
 
 const statusColors: Record<string, string> = {
   pending: 'bg-slate-100 text-slate-700',
@@ -135,7 +136,11 @@ export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>()
   const queryClient = useQueryClient()
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  
+  const [rejectReason, setRejectReason] = useState('')
+  const [showRejectInput, setShowRejectInput] = useState(false)
+  const [activeTab, setActiveTab] = useState('activity')
+  const tabsRef = useRef<HTMLDivElement>(null)
+
   const { data: task, isLoading: taskLoading } = useTask(id!)
   const { data: subtasks, isLoading: subtasksLoading } = useSubtasks(id!)
   const { data: risks } = useRiskSignals(id)
@@ -148,11 +153,21 @@ export default function TaskDetailPage() {
     streamState,
   } = useTaskReasoningLogs(id!)
 
-  // Get project ID from the first plan (if available)
-  const projectId = plans && plans.length > 0 ? plans[0].project_id : undefined
+  // Get project ID: prefer plan's project_id, fallback to task.team_id (which stores project_id)
+  const projectId = (plans && plans.length > 0 ? plans[0].project_id : undefined) ?? task?.team_id ?? undefined
+
+  // Find the pending plan (if any) for the plan review card
+  const pendingPlan = plans?.find((p) => p.status === PlanStatus.PENDING_PM_APPROVAL)
+  const approvedPlan = plans?.find((p) => p.status === PlanStatus.APPROVED)
 
   // Task activity logs with polling
   const { logs: taskLogs, isPolling } = useTaskLogs(id, task?.status)
+
+  const invalidateAll = () => {
+    void queryClient.invalidateQueries({ queryKey: ['task', id] })
+    void queryClient.invalidateQueries({ queryKey: ['plans', id] })
+    void queryClient.invalidateQueries({ queryKey: ['subtasks', id] })
+  }
 
   // Status update mutation
   const statusMutation = useMutation({
@@ -160,7 +175,7 @@ export default function TaskDetailPage() {
       updateTaskStatus(id!, status, agentId),
     onSuccess: () => {
       setStatusMessage({ type: 'success', text: 'Task status updated successfully' })
-      void queryClient.invalidateQueries({ queryKey: ['task', id] })
+      invalidateAll()
       setTimeout(() => setStatusMessage(null), 3000)
     },
     onError: (error: Error) => {
@@ -168,31 +183,82 @@ export default function TaskDetailPage() {
     },
   })
 
-  // Start task mutation
+  // Generate plan mutation (Step 1: orchestrator generates the plan)
+  const generatePlanMutation = useMutation({
+    mutationFn: (projId: string) => generatePlan(id!, projId),
+    onSuccess: (result) => {
+      if (result.error) {
+        setStatusMessage({ type: 'error', text: result.error })
+      } else {
+        setStatusMessage({ type: 'success', text: 'Plan generated — review and approve below' })
+      }
+      invalidateAll()
+    },
+    onError: (error: Error) => {
+      setStatusMessage({ type: 'error', text: error.message || 'Failed to generate plan' })
+    },
+  })
+
+  // Approve plan mutation (Step 2: triggers orchestrator to execute the plan in background)
+  const approvePlanMutation = useMutation({
+    mutationFn: (planId: string) => approvePlan(planId),
+    onSuccess: () => {
+      setStatusMessage({ type: 'success', text: 'Plan approved — orchestrator is executing the task' })
+      setActiveTab('reasoning')
+      invalidateAll()
+      // Scroll tabs into view so the user sees the Reasoning tab immediately
+      setTimeout(() => {
+        tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 100)
+    },
+    onError: (error: Error) => {
+      setStatusMessage({ type: 'error', text: error.message || 'Failed to approve plan' })
+    },
+  })
+
+  // Reject plan mutation
+  const rejectPlanMutation = useMutation({
+    mutationFn: ({ planId, reason }: { planId: string; reason: string }) => rejectPlan(planId, reason),
+    onSuccess: () => {
+      setStatusMessage({ type: 'success', text: 'Plan rejected' })
+      setShowRejectInput(false)
+      setRejectReason('')
+      invalidateAll()
+    },
+    onError: (error: Error) => {
+      setStatusMessage({ type: 'error', text: error.message || 'Failed to reject plan' })
+    },
+  })
+
+  // Start task mutation (used when plan is already approved)
   const startMutation = useMutation({
-    mutationFn: (projectId: string) => startTask(id!, projectId),
+    mutationFn: (projId: string) => startTask(id!, projId),
     onSuccess: (result) => {
       if (result.error) {
         setStatusMessage({ type: 'error', text: result.error })
       } else {
         setStatusMessage({ type: 'success', text: 'Task started and sent to orchestrator' })
       }
-      void queryClient.invalidateQueries({ queryKey: ['task', id] })
+      invalidateAll()
     },
     onError: (error: Error) => {
       setStatusMessage({ type: 'error', text: error.message || 'Failed to start task' })
     },
   })
 
+  const isBusy = statusMutation.isPending || startMutation.isPending || generatePlanMutation.isPending || approvePlanMutation.isPending || rejectPlanMutation.isPending
+
   // Get available status transitions based on current status
+  // pending: Start button visible (generates plan, moves to assigned)
+  // assigned: no Start button — plan card handles approve/reject
   const getAvailableTransitions = (currentStatus: string) => {
-    const transitions: Record<string, { status: string; label: string; variant: 'default' | 'outline' | 'destructive' }[]> = {
+    const base: Record<string, { status: string; label: string; variant: 'default' | 'outline' | 'destructive' }[]> = {
       [TaskStatus.PENDING]: [
-        { status: TaskStatus.IN_PROGRESS, label: 'Start', variant: 'default' },
+        { status: TaskStatus.IN_PROGRESS as string, label: 'Start', variant: 'default' as const },
         { status: TaskStatus.CANCELLED, label: 'Cancel', variant: 'destructive' },
       ],
       [TaskStatus.ASSIGNED]: [
-        { status: TaskStatus.IN_PROGRESS, label: 'Start', variant: 'default' },
+        // Plan review card handles approve/reject — only show Cancel here
         { status: TaskStatus.CANCELLED, label: 'Cancel', variant: 'destructive' },
       ],
       [TaskStatus.IN_PROGRESS]: [
@@ -211,7 +277,7 @@ export default function TaskDetailPage() {
         { status: TaskStatus.PENDING, label: 'Reopen', variant: 'default' },
       ],
     }
-    return transitions[currentStatus] || []
+    return base[currentStatus] || []
   }
 
   if (taskLoading) {
@@ -297,25 +363,33 @@ export default function TaskDetailPage() {
               key={transition.status}
               variant={transition.variant}
               size="sm"
-              disabled={statusMutation.isPending || startMutation.isPending}
+              disabled={isBusy}
               onClick={() => {
-                // For "Start" on pending/assigned tasks with a plan, use startTask to trigger orchestrator
+                // "Start" on pending/assigned: generate a plan (or use existing approved plan)
                 if (
                   transition.status === TaskStatus.IN_PROGRESS &&
-                  (task.status === TaskStatus.PENDING || task.status === TaskStatus.ASSIGNED) &&
-                  plans &&
-                  plans.length > 0
+                  (task.status === TaskStatus.PENDING || task.status === TaskStatus.ASSIGNED)
                 ) {
-                  const approvedPlan = plans.find((p) => p.status === 'approved')
+                  // If plan already approved (edge case: approval succeeded but task stayed pending),
+                  // re-trigger execution via the start endpoint as a recovery mechanism
                   if (approvedPlan) {
                     startMutation.mutate(approvedPlan.project_id)
                     return
                   }
+                  // Otherwise generate a new plan for PM review
+                  if (projectId) {
+                    generatePlanMutation.mutate(projectId)
+                  } else {
+                    setStatusMessage({ type: 'error', text: 'No project associated with this task' })
+                  }
+                  return
                 }
                 statusMutation.mutate({ status: transition.status })
               }}
             >
-              {transition.label}
+              {generatePlanMutation.isPending && transition.status === TaskStatus.IN_PROGRESS
+                ? 'Generating plan...'
+                : transition.label}
             </Button>
           ))}
         </div>
@@ -340,6 +414,180 @@ export default function TaskDetailPage() {
         )}
       </div>
 
+      {/* Plan Review Card — shown when a plan is waiting for PM approval */}
+      {pendingPlan && (
+        <Card className="border-amber-300 bg-amber-50/50">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                </svg>
+                <CardTitle className="text-base text-amber-900">Plan Awaiting Approval</CardTitle>
+              </div>
+              <Badge className="bg-amber-100 text-amber-800 border-amber-300">
+                Pending Review
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Summary */}
+            {pendingPlan.plan_data.summary ? (
+              <div>
+                <h4 className="text-sm font-medium text-slate-700 mb-1">Summary</h4>
+                <p className="text-sm text-slate-600">{String(pendingPlan.plan_data.summary)}</p>
+              </div>
+            ) : null}
+
+            {/* Agent Selection + Human Assignment */}
+            <div className="grid gap-3 md:grid-cols-2">
+              {pendingPlan.plan_data.selected_agent ? (
+                <div className="rounded-md bg-white border border-slate-200 p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    <h4 className="text-sm font-medium text-slate-700">Selected Agent</h4>
+                  </div>
+                  <p className="text-sm font-medium text-slate-900">{String(pendingPlan.plan_data.selected_agent)}</p>
+                  {pendingPlan.plan_data.selected_agent_reason ? (
+                    <p className="mt-1 text-xs text-slate-500">{String(pendingPlan.plan_data.selected_agent_reason)}</p>
+                  ) : null}
+                </div>
+              ) : null}
+              {pendingPlan.plan_data.suggested_assignee ? (
+                <div className="rounded-md bg-white border border-slate-200 p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    <h4 className="text-sm font-medium text-slate-700">Suggested Assignee</h4>
+                  </div>
+                  <p className="text-sm font-medium text-slate-900">{String(pendingPlan.plan_data.suggested_assignee)}</p>
+                  {pendingPlan.plan_data.suggested_assignee_reason ? (
+                    <p className="mt-1 text-xs text-slate-500">{String(pendingPlan.plan_data.suggested_assignee_reason)}</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
+            {/* Subtasks / Steps */}
+            {Array.isArray(pendingPlan.plan_data.subtasks) && (pendingPlan.plan_data.subtasks as Array<Record<string, unknown>>).length > 0 ? (
+              <div>
+                <h4 className="text-sm font-medium text-slate-700 mb-2">Planned Subtasks</h4>
+                <ol className="space-y-2">
+                  {(pendingPlan.plan_data.subtasks as Array<Record<string, unknown>>).map((step, i) => (
+                    <li key={i} className="flex gap-3 rounded-md bg-white border border-slate-200 p-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-xs font-medium text-slate-600">
+                        {i + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-sm text-slate-700">{String(step.title ?? step.description ?? step.name ?? JSON.stringify(step))}</span>
+                        {step.skill ? (
+                          <Badge variant="outline" className="ml-2 text-[10px]">{String(step.skill)}</Badge>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ) : null}
+
+            {/* Alternatives Considered */}
+            {Array.isArray(pendingPlan.plan_data.alternatives_considered) && (pendingPlan.plan_data.alternatives_considered as Array<Record<string, unknown>>).length > 0 ? (
+              <div>
+                <h4 className="text-xs font-medium text-slate-500 mb-1">Alternatives Considered</h4>
+                <div className="space-y-1">
+                  {(pendingPlan.plan_data.alternatives_considered as Array<Record<string, unknown>>).map((alt, i) => (
+                    <p key={i} className="text-xs text-slate-500">
+                      <span className="font-medium">{String(alt.agent ?? 'Unknown')}</span>: {String(alt.reason ?? '')}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* Estimated Hours */}
+            {pendingPlan.plan_data.estimated_hours ? (
+              <p className="text-xs text-slate-500">Estimated: {String(pendingPlan.plan_data.estimated_hours)} hours</p>
+            ) : null}
+
+            {/* Approve / Reject Actions */}
+            <div className="flex items-center gap-3 pt-2 border-t border-amber-200">
+              <Button
+                size="sm"
+                disabled={isBusy}
+                onClick={() => approvePlanMutation.mutate(pendingPlan.id)}
+              >
+                {approvePlanMutation.isPending ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Approving & Executing...
+                  </span>
+                ) : (
+                  <>Approve Plan</>
+                )}
+              </Button>
+              {!showRejectInput ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isBusy}
+                  onClick={() => setShowRejectInput(true)}
+                >
+                  Reject
+                </Button>
+              ) : (
+                <div className="flex items-center gap-2 flex-1">
+                  <input
+                    type="text"
+                    placeholder="Rejection reason..."
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    disabled={isBusy}
+                    className="flex-1 rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50"
+                  />
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={isBusy || !rejectReason.trim()}
+                    onClick={() => rejectPlanMutation.mutate({ planId: pendingPlan.id, reason: rejectReason.trim() })}
+                  >
+                    Confirm Reject
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { setShowRejectInput(false); setRejectReason('') }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Generating Plan Loading State */}
+      {generatePlanMutation.isPending && !pendingPlan && (
+        <Card className="border-sky-300 bg-sky-50/50">
+          <CardContent className="flex items-center gap-3 py-4">
+            <svg className="w-5 h-5 text-sky-600 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <div>
+              <p className="text-sm font-medium text-sky-900">Generating plan...</p>
+              <p className="text-xs text-sky-700">The orchestrator is analyzing the task and creating an execution plan. This may take a moment.</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Progress Bar */}
       <div className="max-w-md">
         <div className="flex items-center justify-between text-sm mb-2">
@@ -350,7 +598,8 @@ export default function TaskDetailPage() {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="activity" className="space-y-4">
+      <div ref={tabsRef} />
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList variant="jira">
           <TabsTrigger value="activity">
             Activity {isPolling && <span className="ml-1 w-2 h-2 bg-green-500 rounded-full inline-block animate-pulse" />}
@@ -498,8 +747,15 @@ export default function TaskDetailPage() {
                         <StatusBadge status={plan.status} />
                         <span className="text-xs text-slate-500">v{plan.version}</span>
                       </div>
-                      {typeof plan.plan_data.summary === 'string' && (
-                        <p className="text-slate-600">{plan.plan_data.summary}</p>
+                      {('result' in plan.plan_data || 'summary' in plan.plan_data) && (
+                        <p className="text-slate-600 line-clamp-4 whitespace-pre-wrap">
+                          {String(plan.plan_data.result ?? plan.plan_data.summary ?? '')}
+                        </p>
+                      )}
+                      {plan.rejection_reason && (
+                        <p className="mt-2 text-xs text-red-600">
+                          Rejected: {plan.rejection_reason}
+                        </p>
                       )}
                     </div>
                   ))}

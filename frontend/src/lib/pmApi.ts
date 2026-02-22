@@ -4,6 +4,7 @@ import type {
   MarketplaceAgent,
   PMDashboard,
   Plan,
+  PlanGenerateResponse,
   Project,
   ProjectAllowedAgent,
   TaskCreateRequest,
@@ -42,6 +43,14 @@ export async function addProjectAllowedAgent(
 
 export async function removeProjectAllowedAgent(projectId: string, agentId: string): Promise<void> {
   await apiClient.delete(`/projects/${projectId}/allowlist/${agentId}`)
+}
+
+export async function generatePlan(taskId: string, projectId: string): Promise<PlanGenerateResponse> {
+  const { data } = await apiClient.post<PlanGenerateResponse>('/plans/generate', {
+    task_id: taskId,
+    project_id: projectId,
+  })
+  return data
 }
 
 export async function approvePlan(planId: string): Promise<Plan> {

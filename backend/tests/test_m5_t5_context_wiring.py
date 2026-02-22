@@ -60,29 +60,32 @@ async def _make_task(db: AsyncSession, owner: User) -> Task:
 
 
 class TestGeneratePlan:
-    """Test that generate_plan calls orchestrator.execute_task and creates a Plan row."""
+    """Test that generate_plan calls orchestrator.generate_plan and returns plan data."""
 
     @pytest.mark.asyncio
     async def test_generate_plan_creates_plan_row(self, db_session: AsyncSession):
-        """generate_plan should call execute_task and persist a Plan."""
+        """generate_plan should call orchestrator.generate_plan and return plan data."""
         user = await _make_user(db_session)
         project = await _make_project(db_session, user)
         task = await _make_task(db_session, user)
         await db_session.commit()
 
-        mock_result = {
+        plan_id = str(uuid4())
+        mock_gen_result = {
             "task_id": task.id,
-            "status": "completed",
-            "result": "Step 1: generate code\nStep 2: review code",
-            "plan": [
-                {"skill": "generate_code", "status": "completed"},
-                {"skill": "review_code", "status": "completed"},
-            ],
-            "error": None,
+            "plan_id": plan_id,
+            "status": PlanStatus.PENDING_PM_APPROVAL.value,
+            "plan_data": {
+                "summary": "Execute task using code agent",
+                "subtasks": [{"title": "Generate code", "skill": "generate_code", "priority": 1}],
+                "selected_agent": "CodeBot",
+                "selected_agent_reason": "Best fit for code generation",
+            },
+            "rationale": "Selected CodeBot: Best fit for code generation",
         }
 
         mock_orchestrator = MagicMock()
-        mock_orchestrator.execute_task = AsyncMock(return_value=mock_result)
+        mock_orchestrator.generate_plan = AsyncMock(return_value=mock_gen_result)
 
         mock_paid = MagicMock()
         mock_paid.check_usage_limit = AsyncMock(return_value=True)
@@ -98,22 +101,20 @@ class TestGeneratePlan:
                 db=db_session,
             )
 
-        # Verify orchestrator was called with project_id
-        mock_orchestrator.execute_task.assert_called_once()
-        call_kwargs = mock_orchestrator.execute_task.call_args.kwargs
+        # Verify orchestrator.generate_plan was called with correct args
+        mock_orchestrator.generate_plan.assert_called_once()
+        call_kwargs = mock_orchestrator.generate_plan.call_args.kwargs
         assert call_kwargs["project_id"] == project.id
-        assert call_kwargs["task_type"] == "plan_generation"
+        assert call_kwargs["task_id"] == task.id
 
-        # Verify a Plan row was persisted
-        assert result["plan_id"] is not None
-        plan_result = await db_session.execute(
-            select(Plan).where(Plan.id == result["plan_id"])
-        )
-        plan = plan_result.scalar_one()
-        assert plan.project_id == project.id
-        assert plan.task_id == task.id
-        assert plan.status == PlanStatus.PENDING_PM_APPROVAL.value
-        assert "steps" in plan.plan_data
+        # Verify response shape
+        assert result["plan_id"] == plan_id
+        assert result["status"] == PlanStatus.PENDING_PM_APPROVAL.value
+        assert result["plan_data"]["selected_agent"] == "CodeBot"
+
+        # Verify task was moved to assigned
+        await db_session.refresh(task)
+        assert task.status == TaskStatus.ASSIGNED
 
     @pytest.mark.asyncio
     async def test_generate_plan_returns_correct_response(self, db_session: AsyncSession):
@@ -123,16 +124,17 @@ class TestGeneratePlan:
         task = await _make_task(db_session, user)
         await db_session.commit()
 
-        mock_result = {
+        plan_id = str(uuid4())
+        mock_gen_result = {
             "task_id": task.id,
-            "status": "completed",
-            "result": "Generated plan",
-            "plan": [{"skill": "generate_code", "status": "completed"}],
-            "error": None,
+            "plan_id": plan_id,
+            "status": PlanStatus.PENDING_PM_APPROVAL.value,
+            "plan_data": {"summary": "Generated plan"},
+            "rationale": "Selected agent: reason",
         }
 
         mock_orchestrator = MagicMock()
-        mock_orchestrator.execute_task = AsyncMock(return_value=mock_result)
+        mock_orchestrator.generate_plan = AsyncMock(return_value=mock_gen_result)
 
         mock_paid = MagicMock()
         mock_paid.check_usage_limit = AsyncMock(return_value=True)
@@ -149,9 +151,9 @@ class TestGeneratePlan:
             )
 
         assert result["task_id"] == task.id
-        assert result["status"] == "completed"
-        assert result["plan_id"] is not None
-        assert result["rationale"] == "Generated plan"
+        assert result["status"] == PlanStatus.PENDING_PM_APPROVAL.value
+        assert result["plan_id"] == plan_id
+        assert result["rationale"] == "Selected agent: reason"
         assert result["error"] is None
 
 

@@ -414,6 +414,7 @@ class PlanResponse(BaseModel):
     project_id: str
     status: str
     plan_data: dict[str, Any]
+    rationale: str | None = None
     approved_by_id: str | None
     approved_at: datetime | None
     rejection_reason: str | None

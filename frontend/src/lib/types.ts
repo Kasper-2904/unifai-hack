@@ -172,6 +172,7 @@ export interface TaskCreateRequest {
   description?: string;
   task_type: string;
   project_id: string;
+  assigned_agent_id?: string;
 }
 
 export type TaskCreateResponse = Task;
@@ -307,12 +308,22 @@ export interface Plan {
   project_id: string;
   status: PlanStatus;
   plan_data: Record<string, unknown>;
+  rationale: string | null;
   approved_by_id: string | null;
   approved_at: string | null;
   rejection_reason: string | null;
   version: number;
   created_at: string;
   updated_at: string | null;
+}
+
+export interface PlanGenerateResponse {
+  task_id: string;
+  plan_id: string | null;
+  status: string;
+  plan_data: Record<string, unknown>;
+  rationale: string | null;
+  error: string | null;
 }
 
 export interface TeamMember {
