@@ -167,6 +167,15 @@ export interface Task {
   completed_at: string | null;
 }
 
+export interface TaskCreateRequest {
+  title: string;
+  description?: string;
+  task_type: string;
+  project_id: string;
+}
+
+export type TaskCreateResponse = Task;
+
 export interface TaskDetail extends Task {
   input_data: Record<string, unknown>;
   result: Record<string, unknown> | null;

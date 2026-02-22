@@ -99,6 +99,11 @@ Monorepo architecture with a web app, Python API, shared context store, OA plann
 - `GET /api/v1/dashboard/developer/{user_id}`
 - `GET /api/v1/dashboard/pm/{project_id}`
 
+## Task Creation/Project Linkage Notes (M5-T8)
+- `POST /api/v1/tasks` supports project-scoped creation via `project_id` (legacy `team_id` input remains supported).
+- PM-scoped authorization for project task creation is enforced server-side: project owner, project PM/Admin member, or superuser.
+- `GET /api/v1/projects/{project_id}/tasks` composes task board data from both plan-linked tasks and direct project-scoped tasks.
+
 ## Data and Storage
 - Primary DB for normalized context and workflow state.
 - Event log for approvals, assignments, agent runs, reviewer findings, and billing events.

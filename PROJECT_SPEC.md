@@ -155,6 +155,14 @@ The platform maintains structured shared context in explicit markdown documents:
 - Log entry shape: `id`, `task_id`, optional `subtask_id`, `event_type`, `message`, `status`, `sequence`, `payload`, `source`, `created_at`.
 - Access policy mirrors `GET /api/v1/tasks/{task_id}` (creator, project owner, or project member).
 
+## PM Task Creation Contract (M5-T8)
+- `POST /api/v1/tasks` accepts optional `project_id` for project-scoped PM task creation (legacy `team_id` remains accepted for backward compatibility).
+- For project-scoped creation, authorization is: project owner, project PM/Admin member, or superuser.
+- Error contract for scoped create:
+  - `404` when project is missing or inaccessible to caller.
+  - `403` when caller can access project but lacks PM/Admin role.
+- `GET /api/v1/projects/{project_id}/tasks` returns both plan-linked tasks and direct project-scoped tasks created via `POST /api/v1/tasks`.
+
 ## Acceptance Criteria
 - [ ] PM can submit task and approve/reject OA plan before execution.
 - [ ] OA can generate team-member + hosted-agent assignment plan using shared context.

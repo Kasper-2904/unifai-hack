@@ -1,5 +1,13 @@
 import { apiClient } from '@/lib/apiClient'
-import type { Agent, PMDashboard, Plan, Project, ProjectAllowedAgent } from '@/lib/types'
+import type {
+  Agent,
+  PMDashboard,
+  Plan,
+  Project,
+  ProjectAllowedAgent,
+  TaskCreateRequest,
+  TaskCreateResponse,
+} from '@/lib/types'
 
 export async function listProjects(): Promise<Project[]> {
   const { data } = await apiClient.get<Project[]>('/projects')
@@ -44,5 +52,10 @@ export async function rejectPlan(planId: string, rejectionReason: string): Promi
   const { data } = await apiClient.post<Plan>(`/plans/${planId}/reject`, {
     rejection_reason: rejectionReason,
   })
+  return data
+}
+
+export async function createPMTask(payload: TaskCreateRequest): Promise<TaskCreateResponse> {
+  const { data } = await apiClient.post<TaskCreateResponse>('/tasks', payload)
   return data
 }

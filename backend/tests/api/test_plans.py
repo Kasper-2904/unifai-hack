@@ -122,14 +122,23 @@ class TestPMRoleVerification:
     async def test_require_pm_role_raises_for_non_pm(
         self, db_session: AsyncSession, test_user: User, test_project: Project
     ):
-        """require_pm_role_for_project should raise 403 for non-PM users."""
+        """require_pm_role_for_project should hide inaccessible projects."""
         from fastapi import HTTPException
+        outsider = User(
+            id=str(uuid4()),
+            email="outsider@example.com",
+            username="outsideruser",
+            hashed_password="hashed",
+            is_active=True,
+            is_superuser=False,
+        )
+        db_session.add(outsider)
+        await db_session.commit()
 
         with pytest.raises(HTTPException) as exc_info:
-            await require_pm_role_for_project(db_session, test_user, test_project.id)
+            await require_pm_role_for_project(db_session, outsider, test_project.id)
 
-        assert exc_info.value.status_code == 403
-        assert "PM or Admin" in exc_info.value.detail
+        assert exc_info.value.status_code == 404
 
     async def test_require_pm_role_passes_for_pm(
         self, db_session: AsyncSession, test_user: User, test_project: Project

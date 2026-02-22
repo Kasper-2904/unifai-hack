@@ -1,12 +1,14 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { AxiosError } from 'axios'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ProjectDetailPage from '@/pages/ProjectDetailPage'
 import {
   addProjectAllowedAgent,
   approvePlan,
+  createPMTask,
   fetchPMDashboard,
   listOwnedAgents,
   rejectPlan,
@@ -22,6 +24,7 @@ vi.mock('@/lib/pmApi', () => ({
   removeProjectAllowedAgent: vi.fn(),
   approvePlan: vi.fn(),
   rejectPlan: vi.fn(),
+  createPMTask: vi.fn(),
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -97,6 +100,7 @@ describe('ProjectDetailPage', () => {
   const mockedRemoveProjectAllowedAgent = vi.mocked(removeProjectAllowedAgent)
   const mockedApprovePlan = vi.mocked(approvePlan)
   const mockedRejectPlan = vi.mocked(rejectPlan)
+  const mockedCreatePMTask = vi.mocked(createPMTask)
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -116,6 +120,19 @@ describe('ProjectDetailPage', () => {
       version: 1,
       created_at: '2026-02-21T10:00:00Z',
       updated_at: '2026-02-21T11:00:00Z',
+    })
+    mockedCreatePMTask.mockResolvedValue({
+      id: 'task-1',
+      title: 'New PM Task',
+      description: null,
+      task_type: 'bug_fix',
+      status: 'pending',
+      progress: 0,
+      assigned_agent_id: null,
+      team_id: 'proj-1',
+      created_at: '2026-02-21T11:00:00Z',
+      started_at: null,
+      completed_at: null,
     })
   })
 
@@ -308,5 +325,126 @@ describe('ProjectDetailPage', () => {
     await waitFor(() => {
       expect(mockedRejectPlan).toHaveBeenCalledWith('plan-1', 'Missing acceptance criteria')
     })
+  })
+
+  it('creates a PM task from project tasks tab', async () => {
+    const user = userEvent.setup()
+    mockedFetchPMDashboard.mockResolvedValue(makeDashboard())
+    mockedListOwnedAgents.mockResolvedValue([])
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Orchestrator MVP' })
+
+    await user.type(screen.getByPlaceholderText('Task title'), 'Fix flaky tests')
+    await user.selectOptions(screen.getByDisplayValue('Code Generation'), 'bug_fix')
+    await user.type(screen.getByPlaceholderText('Description (optional)'), 'Investigate and fix CI flakes')
+    await user.click(screen.getByRole('button', { name: 'Create Task' }))
+
+    await waitFor(() => {
+      expect(mockedCreatePMTask).toHaveBeenCalledWith({
+        title: 'Fix flaky tests',
+        task_type: 'bug_fix',
+        description: 'Investigate and fix CI flakes',
+        project_id: 'proj-1',
+      })
+    })
+  })
+
+  it('shows success feedback and refreshes task board after PM task creation', async () => {
+    const user = userEvent.setup()
+    mockedFetchPMDashboard.mockResolvedValue(makeDashboard())
+    mockedListOwnedAgents.mockResolvedValue([])
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Orchestrator MVP' })
+
+    await user.type(screen.getByPlaceholderText('Task title'), 'New onboarding task')
+    await user.click(screen.getByRole('button', { name: 'Create Task' }))
+
+    expect(await screen.findByText('Task created successfully.')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockedGetProjectTasks.mock.calls.length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
+  it('keeps create button disabled while task creation is in-flight', async () => {
+    const user = userEvent.setup()
+    mockedFetchPMDashboard.mockResolvedValue(makeDashboard())
+    mockedListOwnedAgents.mockResolvedValue([])
+    mockedCreatePMTask.mockImplementation(() => new Promise(() => {}))
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Orchestrator MVP' })
+
+    await user.type(screen.getByPlaceholderText('Task title'), 'Long running task')
+    await user.click(screen.getByRole('button', { name: 'Create Task' }))
+
+    expect(screen.getByRole('button', { name: 'Creating...' })).toBeDisabled()
+    expect(screen.getByPlaceholderText('Task title')).toBeDisabled()
+    expect(screen.getByPlaceholderText('Description (optional)')).toBeDisabled()
+  })
+
+  it('prevents create request when title is missing', async () => {
+    const user = userEvent.setup()
+    mockedFetchPMDashboard.mockResolvedValue(makeDashboard())
+    mockedListOwnedAgents.mockResolvedValue([])
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Orchestrator MVP' })
+
+    await user.click(screen.getByRole('button', { name: 'Create Task' }))
+
+    expect(mockedCreatePMTask).not.toHaveBeenCalled()
+  })
+
+  it('shows friendly validation message for backend 422 response', async () => {
+    const user = userEvent.setup()
+    mockedFetchPMDashboard.mockResolvedValue(makeDashboard())
+    mockedListOwnedAgents.mockResolvedValue([])
+    const unprocessableError = new AxiosError('Unprocessable Entity')
+    unprocessableError.response = {
+      status: 422,
+      statusText: 'Unprocessable Entity',
+      headers: {},
+      config: {} as never,
+      data: { detail: 'validation error' },
+    }
+    mockedCreatePMTask.mockRejectedValue(unprocessableError)
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Orchestrator MVP' })
+
+    await user.type(screen.getByPlaceholderText('Task title'), 'Invalid task payload')
+    await user.click(screen.getByRole('button', { name: 'Create Task' }))
+
+    expect(
+      await screen.findByText('Please check required fields and task type before submitting.'),
+    ).toBeInTheDocument()
+  })
+
+  it('shows friendly permission error when task creation is forbidden', async () => {
+    const user = userEvent.setup()
+    mockedFetchPMDashboard.mockResolvedValue(makeDashboard())
+    mockedListOwnedAgents.mockResolvedValue([])
+    const forbiddenError = new AxiosError('Forbidden')
+    forbiddenError.response = {
+      status: 403,
+      statusText: 'Forbidden',
+      headers: {},
+      config: {} as never,
+      data: { detail: 'Only PM or Admin can perform this action' },
+    }
+    mockedCreatePMTask.mockRejectedValue(forbiddenError)
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Orchestrator MVP' })
+
+    await user.type(screen.getByPlaceholderText('Task title'), 'Unauthorized create')
+    await user.click(screen.getByRole('button', { name: 'Create Task' }))
+
+    expect(
+      await screen.findByText('You do not have permission to create tasks for this project.'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('No tasks yet')).toBeInTheDocument()
   })
 })

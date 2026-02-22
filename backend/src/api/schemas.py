@@ -192,6 +192,10 @@ class TaskCreate(BaseModel):
         description="Type of task: code_generation, code_review, test_generation, documentation, bug_fix, refactor",
     )
     input_data: dict[str, Any] = Field(default_factory=dict)
+    project_id: str | None = Field(
+        None,
+        description="Project context for PM-scoped task creation and project task linkage.",
+    )
     team_id: str | None = None
     assigned_agent_id: str | None = Field(
         None,

@@ -3,9 +3,13 @@
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.auth import get_current_user
 from src.api.projects import (
+    create_task,
     create_project,
     get_project,
     list_projects,
@@ -14,8 +18,10 @@ from src.api.projects import (
     add_project_allowed_agent,
     list_task_reasoning_logs,
 )
-from src.api.schemas import ProjectCreate
-from src.core.state import AgentStatus, TaskStatus, PlanStatus
+from src.api.schemas import ProjectCreate, TaskCreate
+from src.core.state import AgentStatus, TaskStatus, PlanStatus, UserRole
+from src.main import create_app
+from src.storage.database import get_db
 from src.storage.models import Agent, Plan, Project, Task, TaskReasoningLog, TeamMember, User
 
 
@@ -59,6 +65,47 @@ async def _make_task(db: AsyncSession, owner: User, team_id: str | None = None) 
     db.add(task)
     await db.flush()
     return task
+
+
+async def _make_project_member(
+    db: AsyncSession,
+    user: User,
+    project: Project,
+    role: UserRole,
+) -> TeamMember:
+    team_member = TeamMember(
+        id=str(uuid4()),
+        user_id=user.id,
+        project_id=project.id,
+        role=role.value,
+    )
+    db.add(team_member)
+    await db.flush()
+    return team_member
+
+
+@pytest.fixture
+async def api_client(db_session: AsyncSession):
+    app = create_app()
+    context: dict[str, User | None] = {"current_user": None}
+
+    async def override_get_db():
+        yield db_session
+
+    async def override_get_current_user() -> User:
+        user = context["current_user"]
+        if user is None:
+            raise HTTPException(status_code=401, detail="Could not validate credentials")
+        return user
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        yield client, context
+
+    app.dependency_overrides.clear()
 
 
 class TestProjects:
@@ -181,6 +228,266 @@ class TestProjects:
 
         assert len(tasks) == 1
         assert tasks[0].title == "Linked Task"
+
+    @pytest.mark.asyncio
+    async def test_list_project_tasks_includes_direct_project_scoped_tasks(
+        self, db_session: AsyncSession
+    ):
+        user = await _make_user(db_session, "task_owner_2", "task_owner_2@test.com")
+        project = Project(id=str(uuid4()), name="Task Project 2", owner_id=user.id)
+        db_session.add(project)
+
+        task = Task(
+            id=str(uuid4()),
+            title="Direct Project Task",
+            task_type="code_generation",
+            status=TaskStatus.PENDING,
+            created_by_id=user.id,
+            team_id=project.id,
+        )
+        db_session.add(task)
+        await db_session.commit()
+
+        tasks = await list_project_tasks(
+            project_id=project.id, current_user=user, db=db_session
+        )
+
+        assert len(tasks) == 1
+        assert tasks[0].title == "Direct Project Task"
+
+
+class TestTaskCreation:
+    @pytest.mark.asyncio
+    async def test_create_task_allows_project_owner_with_project_context(
+        self, db_session: AsyncSession
+    ):
+        owner = await _make_user(db_session, "proj_owner_create", "proj_owner_create@test.com")
+        project = Project(id=str(uuid4()), name="Owner Project", owner_id=owner.id)
+        db_session.add(project)
+        await db_session.commit()
+
+        task = await create_task(
+            task_data=TaskCreate(
+                title="Create from PM flow",
+                description="Owner creates task",
+                task_type="bug_fix",
+                project_id=project.id,
+            ),
+            current_user=owner,
+            db=db_session,
+        )
+
+        assert task.title == "Create from PM flow"
+        assert task.team_id == project.id
+
+    @pytest.mark.asyncio
+    async def test_create_task_allows_pm_member_with_project_context(
+        self, db_session: AsyncSession
+    ):
+        owner = await _make_user(db_session, "pm_owner", "pm_owner@test.com")
+        pm_user = await _make_user(db_session, "pm_member", "pm_member@test.com")
+        project = Project(id=str(uuid4()), name="PM Project", owner_id=owner.id)
+        db_session.add(project)
+        await db_session.flush()
+        await _make_project_member(db_session, pm_user, project, UserRole.PM)
+        await db_session.commit()
+
+        task = await create_task(
+            task_data=TaskCreate(
+                title="PM scoped task",
+                task_type="code_generation",
+                project_id=project.id,
+            ),
+            current_user=pm_user,
+            db=db_session,
+        )
+
+        assert task.team_id == project.id
+        assert task.created_by_id == pm_user.id
+
+    @pytest.mark.asyncio
+    async def test_create_task_allows_admin_member_with_project_context(
+        self, db_session: AsyncSession
+    ):
+        owner = await _make_user(db_session, "admin_owner", "admin_owner@test.com")
+        admin_user = await _make_user(db_session, "admin_member", "admin_member@test.com")
+        project = Project(id=str(uuid4()), name="Admin Project", owner_id=owner.id)
+        db_session.add(project)
+        await db_session.flush()
+        await _make_project_member(db_session, admin_user, project, UserRole.ADMIN)
+        await db_session.commit()
+
+        task = await create_task(
+            task_data=TaskCreate(
+                title="Admin scoped task",
+                task_type="code_review",
+                project_id=project.id,
+            ),
+            current_user=admin_user,
+            db=db_session,
+        )
+
+        assert task.team_id == project.id
+        assert task.created_by_id == admin_user.id
+
+    @pytest.mark.asyncio
+    async def test_create_task_rejects_non_pm_member(
+        self, db_session: AsyncSession
+    ):
+        owner = await _make_user(db_session, "project_owner", "project_owner@test.com")
+        developer = await _make_user(db_session, "dev_member", "dev_member@test.com")
+        project = Project(id=str(uuid4()), name="Protected Project", owner_id=owner.id)
+        db_session.add(project)
+        await db_session.flush()
+        await _make_project_member(db_session, developer, project, UserRole.DEVELOPER)
+        await db_session.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_task(
+                task_data=TaskCreate(
+                    title="Unauthorized task",
+                    task_type="code_generation",
+                    project_id=project.id,
+                ),
+                current_user=developer,
+                db=db_session,
+            )
+
+        assert exc_info.value.status_code == 403
+        assert "PM or Admin" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_create_task_hides_inaccessible_project(
+        self, db_session: AsyncSession
+    ):
+        owner = await _make_user(db_session, "private_owner", "private_owner@test.com")
+        outsider = await _make_user(db_session, "outsider", "outsider@test.com")
+        project = Project(id=str(uuid4()), name="Private Project", owner_id=owner.id)
+        db_session.add(project)
+        await db_session.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_task(
+                task_data=TaskCreate(
+                    title="Hidden project task",
+                    task_type="code_generation",
+                    project_id=project.id,
+                ),
+                current_user=outsider,
+                db=db_session,
+            )
+
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_create_task_rejects_mismatched_project_and_team_id(
+        self, db_session: AsyncSession
+    ):
+        owner = await _make_user(db_session, "mismatch_owner", "mismatch_owner@test.com")
+        project = Project(id=str(uuid4()), name="Mismatch Project", owner_id=owner.id)
+        db_session.add(project)
+        await db_session.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_task(
+                task_data=TaskCreate(
+                    title="Mismatched IDs",
+                    task_type="bug_fix",
+                    project_id=project.id,
+                    team_id=str(uuid4()),
+                ),
+                current_user=owner,
+                db=db_session,
+            )
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail == "project_id and team_id must match when both are provided"
+
+    @pytest.mark.asyncio
+    async def test_create_task_keeps_legacy_non_project_flow(
+        self, db_session: AsyncSession
+    ):
+        user = await _make_user(db_session, "legacy_user", "legacy_user@test.com")
+        await db_session.commit()
+
+        task = await create_task(
+            task_data=TaskCreate(
+                title="Legacy task",
+                task_type="documentation",
+            ),
+            current_user=user,
+            db=db_session,
+        )
+
+        assert task.created_by_id == user.id
+        assert task.team_id is None
+
+    @pytest.mark.asyncio
+    async def test_create_task_is_discoverable_in_project_task_listing(
+        self, db_session: AsyncSession
+    ):
+        owner = await _make_user(db_session, "discover_owner", "discover_owner@test.com")
+        project = Project(id=str(uuid4()), name="Discoverable Project", owner_id=owner.id)
+        db_session.add(project)
+        await db_session.commit()
+
+        created = await create_task(
+            task_data=TaskCreate(
+                title="Discoverable task",
+                task_type="refactor",
+                project_id=project.id,
+            ),
+            current_user=owner,
+            db=db_session,
+        )
+
+        tasks = await list_project_tasks(project.id, current_user=owner, db=db_session)
+
+        assert [task.id for task in tasks] == [created.id]
+
+    @pytest.mark.asyncio
+    async def test_create_task_api_returns_422_for_missing_required_fields(
+        self, db_session: AsyncSession, api_client
+    ):
+        owner = await _make_user(db_session, "api_owner", "api_owner@test.com")
+        await db_session.commit()
+
+        client, context = api_client
+        context["current_user"] = owner
+
+        response = await client.post("/api/v1/tasks", json={"description": "missing title and type"})
+
+        assert response.status_code == 422
+        payload = response.json()
+        missing_fields = sorted(
+            entry["loc"][-1] for entry in payload["detail"] if entry.get("type") == "missing"
+        )
+        assert missing_fields == ["task_type", "title"]
+
+    @pytest.mark.asyncio
+    async def test_create_task_api_returns_422_for_mismatched_project_and_team_id(
+        self, db_session: AsyncSession, api_client
+    ):
+        owner = await _make_user(db_session, "api_owner_2", "api_owner_2@test.com")
+        project = Project(id=str(uuid4()), name="API Project", owner_id=owner.id)
+        db_session.add(project)
+        await db_session.commit()
+
+        client, context = api_client
+        context["current_user"] = owner
+
+        response = await client.post(
+            "/api/v1/tasks",
+            json={
+                "title": "Mismatch via API",
+                "task_type": "bug_fix",
+                "project_id": project.id,
+                "team_id": str(uuid4()),
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "project_id and team_id must match when both are provided"
 
 
 class TestProjectAllowlist:

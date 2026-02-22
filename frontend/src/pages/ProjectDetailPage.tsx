@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AxiosError } from 'axios'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,6 +14,7 @@ import { getProjectTasks } from '@/lib/api'
 import {
   addProjectAllowedAgent,
   approvePlan,
+  createPMTask,
   fetchPMDashboard,
   listOwnedAgents,
   rejectPlan,
@@ -27,11 +29,44 @@ const taskColumns = [
   { status: TaskStatus.COMPLETED, label: 'Completed', color: 'bg-green-50' },
 ]
 
+const taskTypeOptions = [
+  { value: 'code_generation', label: 'Code Generation' },
+  { value: 'code_review', label: 'Code Review' },
+  { value: 'test_generation', label: 'Test Generation' },
+  { value: 'documentation', label: 'Documentation' },
+  { value: 'bug_fix', label: 'Bug Fix' },
+  { value: 'refactor', label: 'Refactor' },
+]
+
 function formatDate(value: string | null): string {
   if (!value) return 'n/a'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return 'n/a'
   return date.toLocaleDateString()
+}
+
+function getTaskCreateErrorMessage(error: unknown): string {
+  if (!(error instanceof AxiosError)) {
+    return 'Unable to create task right now. Please try again.'
+  }
+
+  if (error.response?.status === 403) {
+    return 'You do not have permission to create tasks for this project.'
+  }
+
+  if (error.response?.status === 404) {
+    return 'Project not found or you no longer have access.'
+  }
+
+  if (error.response?.status === 422) {
+    return 'Please check required fields and task type before submitting.'
+  }
+
+  if (error.response?.status === 400) {
+    return 'Task request is invalid. Please review the form and try again.'
+  }
+
+  return toApiErrorMessage(error, 'Unable to create task right now. Please try again.')
 }
 
 export default function ProjectDetailPage() {
@@ -42,6 +77,10 @@ export default function ProjectDetailPage() {
   const [rejectingPlanId, setRejectingPlanId] = useState<string | null>(null)
   const [rejectionReason, setRejectionReason] = useState('')
   const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [newTaskTitle, setNewTaskTitle] = useState('')
+  const [newTaskType, setNewTaskType] = useState(taskTypeOptions[0].value)
+  const [newTaskDescription, setNewTaskDescription] = useState('')
+  const [taskCreateError, setTaskCreateError] = useState<string | null>(null)
   const projectId = id ?? ''
 
   const dashboardQuery = useQuery({
@@ -94,6 +133,28 @@ export default function ProjectDetailPage() {
       setRejectionReason('')
       setActionMessage(`Plan rejected.`)
       void queryClient.invalidateQueries({ queryKey: ['pm-dashboard', projectId] })
+    },
+  })
+
+  const createTaskMutation = useMutation({
+    mutationFn: () =>
+      createPMTask({
+        title: newTaskTitle.trim(),
+        task_type: newTaskType,
+        description: newTaskDescription.trim() || undefined,
+        project_id: projectId,
+      }),
+    onSuccess: () => {
+      setNewTaskTitle('')
+      setNewTaskType(taskTypeOptions[0].value)
+      setNewTaskDescription('')
+      setTaskCreateError(null)
+      setActionMessage('Task created successfully.')
+      void queryClient.invalidateQueries({ queryKey: ['project-tasks', projectId] })
+      void queryClient.invalidateQueries({ queryKey: ['pm-dashboard', projectId] })
+    },
+    onError: (error) => {
+      setTaskCreateError(getTaskCreateErrorMessage(error))
     },
   })
 
@@ -194,6 +255,70 @@ export default function ProjectDetailPage() {
 
         {/* Tasks Tab - Kanban Board */}
         <TabsContent value="tasks" className="space-y-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Create Task</CardTitle>
+              <CardDescription>Create a new project task for PM workflow.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form
+                className="space-y-3"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  setTaskCreateError(null)
+
+                  if (!newTaskTitle.trim()) {
+                    setTaskCreateError('Task title is required.')
+                    return
+                  }
+
+                  createTaskMutation.mutate()
+                }}
+              >
+                <Input
+                  value={newTaskTitle}
+                  onChange={(event) => setNewTaskTitle(event.target.value)}
+                  placeholder="Task title"
+                  disabled={createTaskMutation.isPending}
+                  required
+                />
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <select
+                    className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm"
+                    value={newTaskType}
+                    onChange={(event) => setNewTaskType(event.target.value)}
+                    disabled={createTaskMutation.isPending}
+                    required
+                  >
+                    {taskTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  <Input
+                    value={newTaskDescription}
+                    onChange={(event) => setNewTaskDescription(event.target.value)}
+                    placeholder="Description (optional)"
+                    disabled={createTaskMutation.isPending}
+                  />
+                </div>
+
+                {taskCreateError && (
+                  <p className="text-sm text-red-600" role="alert">
+                    {taskCreateError}
+                  </p>
+                )}
+
+                <Button type="submit" disabled={createTaskMutation.isPending}>
+                  {createTaskMutation.isPending ? 'Creating...' : 'Create Task'}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-medium">Task Board</h2>
             <Badge variant="outline" className="text-xs">

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import get_settings
 from src.core.state import UserRole
 from src.storage.database import get_db
-from src.storage.models import TeamMember, User
+from src.storage.models import Project, TeamMember, User
 
 # Bearer token scheme
 bearer_scheme = HTTPBearer()
@@ -169,24 +169,46 @@ async def require_pm_role_for_project(
     Raises:
         HTTPException: 403 if user doesn't have PM/ADMIN role
     """
-    # Superusers bypass role checks
-    if user.is_superuser:
-        return
-
-    has_role = await check_user_role_for_project(
-        db, user.id, project_id, [UserRole.PM, UserRole.ADMIN]
-    )
-
-    if not has_role:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only PM or Admin can perform this action",
-        )
-
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is disabled",
+        )
+
+    # Superusers bypass project visibility and role checks.
+    if user.is_superuser:
+        return
+
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    # Project owners can always perform PM-scoped actions.
+    if project.owner_id == user.id:
+        return
+
+    membership_result = await db.execute(
+        select(TeamMember).where(
+            TeamMember.user_id == user.id,
+            TeamMember.project_id == project_id,
+        )
+    )
+    membership = membership_result.scalar_one_or_none()
+    if not membership:
+        # Hide inaccessible projects.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    if membership.role not in {UserRole.PM.value, UserRole.ADMIN.value}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only PM or Admin can perform this action",
         )
 
     return user
