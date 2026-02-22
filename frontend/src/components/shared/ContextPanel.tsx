@@ -15,13 +15,13 @@ import { StatusBadge } from "./StatusBadge";
 import { useTeamMembers, useTasks, useProject } from "@/hooks/use-api";
 
 interface ContextPanelProps {
-  projectId: string;
+  projectId?: string;
   currentTaskId?: string;
 }
 
 export function ContextPanel({ projectId, currentTaskId }: ContextPanelProps) {
   const { data: project } = useProject(projectId);
-  const { data: members } = useTeamMembers(projectId);
+  const { data: members } = useTeamMembers(projectId ?? '');
   const { data: allTasks } = useTasks();
 
   const otherTasks = allTasks?.filter((t) => t.id !== currentTaskId) ?? [];

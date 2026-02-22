@@ -53,10 +53,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await event_bus.start()
     print("Event bus started")
 
+    # Start task scheduler
+    from src.services.task_scheduler import get_task_scheduler
+
+    scheduler = get_task_scheduler()
+    await scheduler.start()
+    print("Task scheduler started")
+
     yield
 
     # Shutdown
     print("Shutting down...")
+
+    # Stop task scheduler
+    await scheduler.stop()
+    print("Task scheduler stopped")
 
     # Stop event bus
     await event_bus.stop()

@@ -19,14 +19,30 @@ from src.api.schemas import (
     ProjectResponse,
     TaskCreate,
     TaskDetail,
+    TaskLogResponse,
+    TaskLogsResponse,
+    TaskProgress,
     TaskReasoningLogResponse,
     TaskResponse,
+    TaskStartRequest,
+    TaskStartResponse,
+    TaskStatusUpdate,
 )
 from src.core.reasoning_logs import get_reasoning_stream_hub
 from src.core.event_bus import Event, EventType, get_event_bus
 from src.core.state import TaskStatus
 from src.storage.database import get_db
-from src.storage.models import Agent, Project, ProjectAllowedAgent, Task, TaskReasoningLog, User
+from src.storage.models import (
+    Agent,
+    MarketplaceAgent,
+    Project,
+    ProjectAllowedAgent,
+    Task,
+    TaskLog,
+    TaskReasoningLog,
+    TeamMember,
+    User,
+)
 
 projects_router = APIRouter(prefix="/projects", tags=["Projects"])
 tasks_router = APIRouter(prefix="/tasks", tags=["Tasks"])
@@ -67,9 +83,7 @@ async def list_projects(
     Returns all workspace projects — any authenticated user can see
     every project in the workspace.
     """
-    result = await db.execute(
-        select(Project).order_by(Project.created_at.desc())
-    )
+    result = await db.execute(select(Project).order_by(Project.created_at.desc()))
     return list(result.scalars().all())
 
 
@@ -145,19 +159,44 @@ async def add_project_allowed_agent(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ProjectAllowedAgent:
-    """Add an agent to a project's allowlist."""
+    """Add an agent to a project's allowlist.
+
+    The agent can be:
+    1. An agent owned by the current user, OR
+    2. A marketplace agent (published and active)
+    """
     project_result = await db.execute(
         select(Project).where(Project.id == project_id, Project.owner_id == current_user.id)
     )
     if not project_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
+    # First try to find agent owned by user
     agent_result = await db.execute(
         select(Agent).where(Agent.id == agent_id, Agent.owner_id == current_user.id)
     )
     agent = agent_result.scalar_one_or_none()
+
+    # If not owned by user, check if it's a marketplace agent (published)
     if not agent:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        marketplace_result = await db.execute(
+            select(MarketplaceAgent).where(
+                MarketplaceAgent.agent_id == agent_id,
+                MarketplaceAgent.is_active == True,
+            )
+        )
+        marketplace_agent = marketplace_result.scalar_one_or_none()
+
+        if marketplace_agent:
+            # Get the underlying agent
+            agent_result = await db.execute(select(Agent).where(Agent.id == agent_id))
+            agent = agent_result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found. Must be an agent you own or a published marketplace agent.",
+        )
 
     existing_result = await db.execute(
         select(ProjectAllowedAgent).where(
@@ -416,3 +455,393 @@ async def stream_task_reasoning_logs(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@tasks_router.patch("/{task_id}", response_model=TaskResponse)
+async def update_task_status(
+    task_id: str,
+    update_data: TaskStatusUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Task:
+    """
+    Update task status. Valid transitions:
+    - PENDING -> ASSIGNED (requires assigned_agent_id)
+    - PENDING -> IN_PROGRESS
+    - ASSIGNED -> IN_PROGRESS
+    - IN_PROGRESS -> COMPLETED
+    - IN_PROGRESS -> FAILED
+    - Any -> CANCELLED
+    """
+    event_bus = get_event_bus()
+
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    # Define valid status transitions
+    valid_transitions: dict[TaskStatus, list[TaskStatus]] = {
+        TaskStatus.PENDING: [TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
+        TaskStatus.ASSIGNED: [TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED],
+        TaskStatus.IN_PROGRESS: [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED],
+        TaskStatus.COMPLETED: [TaskStatus.CANCELLED],
+        TaskStatus.FAILED: [TaskStatus.PENDING, TaskStatus.CANCELLED],
+        TaskStatus.CANCELLED: [TaskStatus.PENDING],
+    }
+
+    current_status = task.status
+    new_status = update_data.status
+
+    if new_status not in valid_transitions.get(current_status, []):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status transition from {current_status.value} to {new_status.value}",
+        )
+
+    # Handle specific transitions
+    if new_status == TaskStatus.ASSIGNED:
+        if not update_data.assigned_agent_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="assigned_agent_id is required when setting status to ASSIGNED",
+            )
+        # Verify agent exists
+        agent_result = await db.execute(
+            select(Agent).where(Agent.id == update_data.assigned_agent_id)
+        )
+        if not agent_result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        task.assigned_agent_id = update_data.assigned_agent_id
+        task.assigned_at = datetime.utcnow()
+
+    if new_status == TaskStatus.IN_PROGRESS:
+        task.started_at = datetime.utcnow()
+
+    if new_status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+        task.completed_at = datetime.utcnow()
+        if new_status == TaskStatus.COMPLETED:
+            task.progress = 1.0
+
+    task.status = new_status
+    await db.commit()
+    await db.refresh(task)
+
+    # Publish status change event
+    await event_bus.publish(
+        Event(
+            type=EventType.TASK_PROGRESS,
+            data={
+                "task_id": task.id,
+                "old_status": current_status.value,
+                "new_status": new_status.value,
+            },
+            source="api",
+        )
+    )
+
+    return task
+
+
+@tasks_router.patch("/{task_id}/progress", response_model=TaskResponse)
+async def update_task_progress(
+    task_id: str,
+    progress_data: TaskProgress,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Task:
+    """
+    Update task progress (0.0 to 1.0).
+
+    This is used by agents or the system to report progress on a task.
+    If progress reaches 1.0, the task status is automatically set to COMPLETED.
+    """
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    if task.status not in (TaskStatus.IN_PROGRESS, TaskStatus.ASSIGNED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot update progress for task with status {task.status.value}",
+        )
+
+    task.progress = progress_data.progress
+
+    # Auto-complete if progress reaches 100%
+    if progress_data.progress >= 1.0:
+        task.status = TaskStatus.COMPLETED
+        task.completed_at = datetime.utcnow()
+        task.progress = 1.0
+
+    await db.commit()
+    await db.refresh(task)
+
+    # Publish progress event
+    event_bus = get_event_bus()
+    await event_bus.publish(
+        Event(
+            type=EventType.TASK_PROGRESS,
+            data={
+                "task_id": task.id,
+                "progress": task.progress,
+                "message": progress_data.message,
+            },
+            source="api",
+        )
+    )
+
+    return task
+
+
+@tasks_router.post("/{task_id}/start", response_model=TaskStartResponse)
+async def start_task(
+    task_id: str,
+    request: TaskStartRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """
+    Start a task by assigning an agent from the project's allowlist.
+
+    This endpoint:
+    1. Validates the task can be started
+    2. Selects an appropriate agent from the project's allowlist
+    3. Assigns the agent to the task
+    4. Sets task status to IN_PROGRESS with initial progress
+    5. Returns immediately (does NOT wait for task completion)
+
+    The actual work execution happens asynchronously or when the agent polls for work.
+    """
+    from src.services.agent_assignment import assign_agent_to_task
+
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    if task.status not in (TaskStatus.PENDING, TaskStatus.ASSIGNED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Task cannot be started from status {task.status.value}",
+        )
+
+    # Assign an agent to the task based on project allowlist
+    assignment_result = await assign_agent_to_task(
+        db=db,
+        task=task,
+        project_id=request.project_id,
+    )
+
+    if assignment_result.get("error"):
+        return {
+            "task_id": task.id,
+            "status": task.status.value,
+            "message": "Failed to assign agent",
+            "orchestration_result": None,
+            "error": assignment_result.get("error"),
+        }
+
+    # Update task status to IN_PROGRESS
+    task.status = TaskStatus.IN_PROGRESS
+    task.started_at = datetime.utcnow()
+    task.progress = 0.1  # Initial progress - task has started
+    await db.commit()
+    await db.refresh(task)
+
+    # Publish event for task started
+    event_bus = get_event_bus()
+    await event_bus.publish(
+        Event(
+            type=EventType.TASK_STARTED,
+            data={
+                "task_id": task.id,
+                "assigned_agent_id": task.assigned_agent_id,
+                "project_id": request.project_id,
+            },
+            source="api",
+        )
+    )
+
+    return {
+        "task_id": task.id,
+        "status": task.status.value,
+        "message": f"Task started and assigned to agent",
+        "orchestration_result": {
+            "assigned_agent_id": task.assigned_agent_id,
+            "status": "in_progress",
+        },
+        "error": None,
+    }
+
+
+@tasks_router.post("/{task_id}/execute", response_model=TaskStartResponse)
+async def execute_task(
+    task_id: str,
+    request: TaskStartRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """
+    Execute a task synchronously through the orchestrator.
+
+    This is for immediate execution - it will wait for the task to complete.
+    Use /start for async task initiation instead.
+    """
+    from src.core.orchestrator import get_orchestrator
+
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    if task.status not in (TaskStatus.PENDING, TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Task cannot be executed from status {task.status.value}",
+        )
+
+    # Update task status to IN_PROGRESS if not already
+    if task.status != TaskStatus.IN_PROGRESS:
+        task.status = TaskStatus.IN_PROGRESS
+        task.started_at = datetime.utcnow()
+        await db.commit()
+
+    # Execute task through orchestrator with project context
+    orchestrator = get_orchestrator()
+    try:
+        orchestration_result = await orchestrator.execute_task(
+            task_id=task.id,
+            task_type=task.task_type,
+            description=task.description or task.title,
+            input_data=task.input_data,
+            team_id=task.team_id,
+            user_id=current_user.id,
+            project_id=request.project_id,
+        )
+
+        # Refresh task to get updates made by orchestrator
+        await db.refresh(task)
+
+        # Update task based on result
+        orch_status = orchestration_result.get("status", "")
+        if orch_status == "completed" or orch_status == "completed_with_errors":
+            task.status = TaskStatus.COMPLETED
+            task.progress = 1.0
+            task.result = orchestration_result
+            task.completed_at = datetime.utcnow()
+        elif orch_status == "failed":
+            task.status = TaskStatus.FAILED
+            task.error = orchestration_result.get("error")
+            task.completed_at = datetime.utcnow()
+
+        await db.commit()
+        await db.refresh(task)
+
+        return {
+            "task_id": task.id,
+            "status": task.status.value,
+            "message": "Task execution completed",
+            "orchestration_result": orchestration_result,
+            "error": orchestration_result.get("error"),
+        }
+
+    except Exception as e:
+        await db.refresh(task)
+        task.status = TaskStatus.FAILED
+        task.error = str(e)
+        task.completed_at = datetime.utcnow()
+        await db.commit()
+
+        return {
+            "task_id": task.id,
+            "status": "failed",
+            "message": "Task execution failed",
+            "orchestration_result": None,
+            "error": str(e),
+        }
+
+
+@tasks_router.get("/{task_id}/logs", response_model=TaskLogsResponse)
+async def get_task_logs(
+    task_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    after_sequence: int = 0,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """
+    Get task activity logs for real-time streaming.
+
+    Use `after_sequence` for polling - only returns logs after that sequence number.
+    This enables efficient polling without re-fetching all logs.
+    """
+    # Verify task exists
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    # Get logs after the specified sequence
+    query = (
+        select(TaskLog)
+        .where(TaskLog.task_id == task_id, TaskLog.sequence > after_sequence)
+        .order_by(TaskLog.sequence.asc())
+        .limit(limit + 1)  # Get one extra to check if there's more
+    )
+    result = await db.execute(query)
+    logs = list(result.scalars().all())
+
+    has_more = len(logs) > limit
+    if has_more:
+        logs = logs[:limit]
+
+    last_sequence = logs[-1].sequence if logs else after_sequence
+
+    return {
+        "task_id": task_id,
+        "logs": logs,
+        "has_more": has_more,
+        "last_sequence": last_sequence,
+    }
+
+
+async def create_task_log(
+    db: AsyncSession,
+    task_id: str,
+    log_type: str,
+    message: str,
+    agent_id: str | None = None,
+    agent_name: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> TaskLog:
+    """Helper function to create a task log entry."""
+    # Get the next sequence number for this task
+    result = await db.execute(
+        select(TaskLog.sequence)
+        .where(TaskLog.task_id == task_id)
+        .order_by(TaskLog.sequence.desc())
+        .limit(1)
+    )
+    last_seq = result.scalar_one_or_none()
+    next_seq = (last_seq or 0) + 1
+
+    log = TaskLog(
+        id=str(uuid4()),
+        task_id=task_id,
+        log_type=log_type,
+        agent_id=agent_id,
+        agent_name=agent_name,
+        message=message,
+        details=details,
+        sequence=next_seq,
+    )
+    db.add(log)
+    await db.flush()
+    return log

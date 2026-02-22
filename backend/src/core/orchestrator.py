@@ -27,7 +27,7 @@ from src.core.state import AgentStatus, TaskStatus
 from src.services.agent_inference import get_inference_service
 from src.storage.database import AsyncSessionLocal as async_session_factory
 from src.core.state import PlanStatus
-from src.storage.models import Agent, Plan, TeamMember
+from src.storage.models import Agent, Plan, ProjectAllowedAgent, Task, TaskLog, TeamMember
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +63,44 @@ class OrchestratorState(TypedDict, total=False):
     user_id: str | None
     team_id: str | None
     subtask_id: str | None
-    project_id: str | None
+    project_id: str | None  # Project ID for agent allowlist filtering
     shared_context: str | None  # Rendered shared context injected before planning
+
+
+async def log_task_activity(
+    task_id: str,
+    log_type: str,
+    message: str,
+    agent_id: str | None = None,
+    agent_name: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Create a task log entry for real-time activity streaming."""
+    from uuid import uuid4
+
+    async with async_session_factory() as session:
+        # Get next sequence number
+        result = await session.execute(
+            select(TaskLog.sequence)
+            .where(TaskLog.task_id == task_id)
+            .order_by(TaskLog.sequence.desc())
+            .limit(1)
+        )
+        last_seq = result.scalar_one_or_none()
+        next_seq = (last_seq or 0) + 1
+
+        log = TaskLog(
+            id=str(uuid4()),
+            task_id=task_id,
+            log_type=log_type,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            message=message,
+            details=details,
+            sequence=next_seq,
+        )
+        session.add(log)
+        await session.commit()
 
 
 async def _load_shared_context(project_id: str | None) -> str:
@@ -111,8 +147,13 @@ async def _load_shared_context(project_id: str | None) -> str:
 
         # Render context dict into a single markdown block for the prompt
         parts = []
-        for key in ("project_overview", "integrations_github", "task_graph",
-                     "team_members", "hosted_agents"):
+        for key in (
+            "project_overview",
+            "integrations_github",
+            "task_graph",
+            "team_members",
+            "hosted_agents",
+        ):
             content = ctx.get(key, "")
             if content and content.strip():
                 parts.append(content.strip())
@@ -136,14 +177,23 @@ async def analyze_task(state: OrchestratorState) -> OrchestratorState:
     task_type = state.get("task_type", "")
     description = state.get("task_description", "")
     project_id = state.get("project_id")
+    task_id = state.get("task_id", "")
 
     settings = get_settings()
+
+    # Log task analysis started
+    await log_task_activity(
+        task_id=task_id,
+        log_type="info",
+        message=f"Analyzing task: {task_type}",
+        details={"description": description[:200] if description else None},
+    )
 
     await event_bus.publish(
         Event(
             type=EventType.TASK_STARTED,
             data={
-                "task_id": state.get("task_id"),
+                "task_id": task_id,
                 "task_type": task_type,
                 "message": "Task execution started",
                 "status": "in_progress",
@@ -212,6 +262,15 @@ async def analyze_task(state: OrchestratorState) -> OrchestratorState:
         }
         plan = task_to_skills.get(task_type, [{"skill": "generate_code", "status": "pending"}])
 
+    # Log the created plan
+    skills_list = [s.get("skill", "") for s in plan]
+    await log_task_activity(
+        task_id=task_id,
+        log_type="info",
+        message=f"Created execution plan with {len(plan)} step(s): {', '.join(skills_list)}",
+        details={"plan": plan},
+    )
+
     return {
         **state,
         "plan": plan,
@@ -223,7 +282,7 @@ async def analyze_task(state: OrchestratorState) -> OrchestratorState:
 
 
 async def select_agent(state: OrchestratorState) -> OrchestratorState:
-    """Select the best agent for the current step based on skills."""
+    """Select the best agent for the current step based on skills and project allowlist."""
     event_bus = get_event_bus()
 
     plan = state.get("plan", [])
@@ -237,10 +296,32 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
     required_skill = step.get("skill", "")
 
     team_id = state.get("team_id")
+    project_id = state.get("project_id")
 
     # Query agents from database
     async with async_session_factory() as session:
-        query = select(Agent).where(Agent.status == AgentStatus.ONLINE)
+        # If project_id is provided, filter by project allowlist first
+        if project_id:
+            # Get allowed agent IDs for this project
+            allowlist_result = await session.execute(
+                select(ProjectAllowedAgent.agent_id).where(
+                    ProjectAllowedAgent.project_id == project_id
+                )
+            )
+            allowed_agent_ids = [row[0] for row in allowlist_result.fetchall()]
+
+            if allowed_agent_ids:
+                # Query only allowed agents that are online
+                query = select(Agent).where(
+                    Agent.status == AgentStatus.ONLINE,
+                    Agent.id.in_(allowed_agent_ids),
+                )
+            else:
+                # No allowlist defined, fall back to all online agents
+                query = select(Agent).where(Agent.status == AgentStatus.ONLINE)
+        else:
+            # No project context, use all online agents
+            query = select(Agent).where(Agent.status == AgentStatus.ONLINE)
 
         result = await session.execute(query)
         agents = list(result.scalars().all())
@@ -252,8 +333,11 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
             selected = agents_with_skill[0]
             reason = f"Agent '{selected.name}' has the required skill '{required_skill}'."
         elif agents:
+            # Fall back to any available agent if no skill match
             selected = agents[0]
-            reason = f"No agent matched skill '{required_skill}'; falling back to '{selected.name}'."
+            reason = (
+                f"No agent matched skill '{required_skill}'; falling back to '{selected.name}'."
+            )
         else:
             selected = None
             reason = f"No online agents available for skill '{required_skill}'."
@@ -270,14 +354,17 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
     selection_log.append(log_entry)
 
     if not selected:
-        failure_message = f"No agents available for skill: {required_skill}"
+        error_msg = f"No agents available for skill: {required_skill}"
+        if project_id:
+            error_msg += f" (filtered by project allowlist)"
+
         await event_bus.publish(
             Event(
                 type=EventType.TASK_FAILED,
                 data={
                     "task_id": state.get("task_id"),
                     "subtask_id": state.get("subtask_id"),
-                    "message": failure_message,
+                    "message": error_msg,
                     "status": "failed",
                 },
                 source="orchestrator",
@@ -288,7 +375,7 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
                 type=EventType.SYSTEM_WARNING,
                 data={
                     "task_id": state.get("task_id"),
-                    "message": failure_message,
+                    "message": error_msg,
                 },
                 source="orchestrator",
             )
@@ -297,9 +384,34 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
             **state,
             "selected_agent_id": None,
             "agent_selection_log": selection_log,
-            "error": failure_message,
+            "error": error_msg,
             "status": "failed",
         }
+
+    # Update the Task in the database with the assigned agent
+    task_id = state.get("task_id")
+    if task_id:
+        async with async_session_factory() as session:
+            task_result = await session.execute(select(Task).where(Task.id == task_id))
+            task = task_result.scalar_one_or_none()
+            if task:
+                from datetime import datetime
+
+                task.assigned_agent_id = selected.id
+                task.assigned_at = datetime.utcnow()
+                task.status = TaskStatus.ASSIGNED
+                await session.commit()
+
+    # Log agent assignment
+    if task_id:
+        await log_task_activity(
+            task_id=task_id,
+            log_type="agent_assigned",
+            message=f"Assigned to agent: {selected.name} ({selected.role})",
+            agent_id=selected.id,
+            agent_name=selected.name,
+            details={"skill": required_skill, "agent_role": selected.role},
+        )
 
     await event_bus.publish(
         Event(
@@ -335,6 +447,7 @@ async def execute_skill(state: OrchestratorState) -> OrchestratorState:
     agent_id = state.get("selected_agent_id")
     skill_name = state.get("skill_name")
     input_data = state.get("input_data", {})
+    task_id = state.get("task_id", "")
 
     if not agent_id or not skill_name:
         message = "No agent or skill selected"
@@ -356,54 +469,117 @@ async def execute_skill(state: OrchestratorState) -> OrchestratorState:
             "status": "failed",
         }
 
-    # Get agent from database
+    # Get agent from database first for logging
     async with async_session_factory() as session:
         result = await session.execute(select(Agent).where(Agent.id == agent_id))
         agent = result.scalar_one_or_none()
 
-        if not agent:
-            message = f"Agent {agent_id} not found"
-            await event_bus.publish(
-                Event(
-                    type=EventType.TASK_FAILED,
-                    data={
-                        "task_id": state.get("task_id"),
-                        "subtask_id": state.get("subtask_id"),
-                        "message": message,
-                        "status": "failed",
-                    },
-                    source="orchestrator",
-                )
+    if not agent:
+        error_msg = f"Agent {agent_id} not found"
+        if task_id:
+            await log_task_activity(
+                task_id=task_id,
+                log_type="error",
+                message=error_msg,
+                agent_id=agent_id,
+                details={"skill": skill_name},
             )
-            return {
-                **state,
-                "error": message,
-                "status": "failed",
-            }
+        await event_bus.publish(
+            Event(
+                type=EventType.TASK_FAILED,
+                data={
+                    "task_id": state.get("task_id"),
+                    "subtask_id": state.get("subtask_id"),
+                    "message": error_msg,
+                    "status": "failed",
+                },
+                source="orchestrator",
+            )
+        )
+        return {
+            **state,
+            "error": error_msg,
+            "status": "failed",
+        }
 
-        # Prepare skill inputs — merge task_description into input_data
-        enriched_input = {**input_data, "description": state.get("task_description", "")}
-        skill_inputs = _prepare_skill_inputs(skill_name, enriched_input)
+    # Log skill execution start with agent name
+    if task_id:
+        await log_task_activity(
+            task_id=task_id,
+            log_type="skill_start",
+            message=f"Agent '{agent.name}' executing skill: {skill_name}",
+            agent_id=agent_id,
+            agent_name=agent.name,
+            details={"skill": skill_name, "agent_role": agent.role},
+        )
 
-        # Build system prompt with shared context for the specialist agent
-        base_prompt = agent.system_prompt or ""
-        shared_ctx = state.get("shared_context", "")
-        if shared_ctx:
-            system_prompt = (
-                f"{base_prompt}\n\n"
-                f"=== PROJECT CONTEXT ===\n"
-                f"{shared_ctx}\n"
-                f"=== END PROJECT CONTEXT ==="
-            ) if base_prompt else shared_ctx
-        else:
-            system_prompt = base_prompt or None
+    # Prepare skill inputs — merge task_description into input_data
+    enriched_input = {**input_data, "description": state.get("task_description", "")}
+    skill_inputs = _prepare_skill_inputs(skill_name, enriched_input)
 
-        # Execute skill via inference service
+    # Build system prompt with shared context for the specialist agent
+    base_prompt = agent.system_prompt or ""
+    shared_ctx = state.get("shared_context", "")
+    if shared_ctx:
+        system_prompt = (
+            (f"{base_prompt}\n\n=== PROJECT CONTEXT ===\n{shared_ctx}\n=== END PROJECT CONTEXT ===")
+            if base_prompt
+            else shared_ctx
+        )
+    else:
+        system_prompt = base_prompt or None
+
+    # Execute skill via inference service with error handling
+    try:
         result_text, _token_usage = await inference_service.execute_skill(
             agent=agent,
             skill=skill_name,
             inputs=skill_inputs,
             system_prompt=system_prompt,
+        )
+    except Exception as e:
+        error_msg = f"Error calling agent '{agent.name}': {str(e)}"
+        if task_id:
+            await log_task_activity(
+                task_id=task_id,
+                log_type="error",
+                message=error_msg,
+                agent_id=agent_id,
+                agent_name=agent.name,
+                details={"skill": skill_name, "error": str(e)},
+            )
+        return {
+            **state,
+            "error": error_msg,
+            "status": "failed",
+            "step_results": state.get("step_results", [])
+            + [
+                {
+                    "step": state.get("current_step", 0) + 1,
+                    "agent_id": agent_id,
+                    "skill": skill_name,
+                    "inputs": skill_inputs,
+                    "result": None,
+                    "error": str(e),
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+            ],
+        }
+
+    agent_name = agent.name
+
+    # Log agent output
+    if task_id:
+        await log_task_activity(
+            task_id=task_id,
+            log_type="agent_output",
+            message=result_text[:500] if result_text else "No output",
+            agent_id=agent_id,
+            agent_name=agent_name,
+            details={
+                "skill": skill_name,
+                "full_output": result_text,
+            },
         )
 
     # Record the result
@@ -430,7 +606,7 @@ async def execute_skill(state: OrchestratorState) -> OrchestratorState:
         Event(
             type=EventType.TASK_PROGRESS,
             data={
-                "task_id": state.get("task_id"),
+                "task_id": task_id,
                 "step": current_step + 1,
                 "total_steps": len(plan),
                 "summary": f"Completed step {current_step + 1} of {len(plan)} ({skill_name})",
@@ -598,7 +774,18 @@ class Orchestrator:
         subtask_id: str | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:
-        """Execute a task through the orchestration pipeline."""
+        """Execute a task through the orchestration pipeline.
+
+        Args:
+            task_id: The task ID
+            task_type: Type of task (code_generation, review, etc.)
+            description: Task description
+            input_data: Additional input data for the task
+            team_id: Team context (optional)
+            user_id: User who triggered the task (optional)
+            subtask_id: Subtask ID if this is a subtask (optional)
+            project_id: Project ID for filtering agents by allowlist (optional)
+        """
         initial_state: OrchestratorState = {
             "task_id": task_id,
             "task_type": task_type,
@@ -646,9 +833,7 @@ class Orchestrator:
         settings = get_settings()
 
         # Query available agents to provide real context to the LLM
-        result = await db.execute(
-            select(Agent).where(Agent.status == AgentStatus.ONLINE)
-        )
+        result = await db.execute(select(Agent).where(Agent.status == AgentStatus.ONLINE))
         agents = list(result.scalars().all())
 
         agent_descriptions = "\n".join(
@@ -657,15 +842,16 @@ class Orchestrator:
         )
 
         # Query team members for assignee suggestions
-        tm_result = await db.execute(
-            select(TeamMember).where(TeamMember.project_id == project_id)
-        )
+        tm_result = await db.execute(select(TeamMember).where(TeamMember.project_id == project_id))
         members = list(tm_result.scalars().all())
 
-        member_descriptions = "\n".join(
-            f"- Member {m.user_id[:8]} (role: {m.role}, skills: {', '.join(m.skills or [])}, capacity: {m.capacity}, current_load: {m.current_load})"
-            for m in members
-        ) or "No team members assigned."
+        member_descriptions = (
+            "\n".join(
+                f"- Member {m.user_id[:8]} (role: {m.role}, skills: {', '.join(m.skills or [])}, capacity: {m.capacity}, current_load: {m.current_load})"
+                for m in members
+            )
+            or "No team members assigned."
+        )
 
         prompt = f"""You are an orchestration agent. Generate a detailed execution plan for this task.
 
@@ -732,15 +918,20 @@ Respond ONLY with a JSON object (no markdown, no extra text) with these fields:
                 "selected_agent": selected.name if selected else "None available",
                 "selected_agent_reason": (
                     f"{selected.name} is online with skills: {', '.join(selected.skills or [])}."
-                    if selected else "No agents are currently online."
+                    if selected
+                    else "No agents are currently online."
                 ),
                 "suggested_assignee": members[0].role if members else "Unassigned",
                 "suggested_assignee_reason": (
                     f"Has skills: {', '.join(members[0].skills or [])}."
-                    if members else "No team members available."
+                    if members
+                    else "No team members available."
                 ),
                 "alternatives_considered": [
-                    {"agent": a.name, "reason": f"Also available with skills: {', '.join(a.skills or [])}."}
+                    {
+                        "agent": a.name,
+                        "reason": f"Also available with skills: {', '.join(a.skills or [])}.",
+                    }
                     for a in others
                 ],
                 "estimated_hours": 8,

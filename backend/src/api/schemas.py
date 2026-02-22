@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl
 
 from src.core.state import (
     AgentStatus,
@@ -262,6 +262,54 @@ class TaskReasoningLogStreamEvent(BaseModel):
 
     event: str
     log: TaskReasoningLogResponse
+
+
+class TaskStatusUpdate(BaseModel):
+    """Schema for updating task status."""
+
+    status: TaskStatus
+    assigned_agent_id: str | None = Field(None, description="Agent to assign (optional)")
+
+
+class TaskStartRequest(BaseModel):
+    """Schema for starting a task (triggering orchestration)."""
+
+    project_id: str = Field(..., description="Project ID for agent allowlist filtering")
+
+
+class TaskStartResponse(BaseModel):
+    """Response from starting a task."""
+
+    task_id: str
+    status: str
+    message: str
+    orchestration_result: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class TaskLogResponse(BaseModel):
+    """Response schema for task logs."""
+
+    id: str
+    task_id: str
+    log_type: str
+    agent_id: str | None = None
+    agent_name: str | None = None
+    message: str
+    details: dict[str, Any] | None = None
+    sequence: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskLogsResponse(BaseModel):
+    """Response with list of task logs."""
+
+    task_id: str
+    logs: list[TaskLogResponse]
+    has_more: bool = False
+    last_sequence: int = 0
 
 
 # ============== MCP Communication Schemas ==============

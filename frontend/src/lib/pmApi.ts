@@ -1,6 +1,7 @@
 import { apiClient } from '@/lib/apiClient'
 import type {
   Agent,
+  MarketplaceAgent,
   PMDashboard,
   Plan,
   Project,
@@ -57,5 +58,24 @@ export async function rejectPlan(planId: string, rejectionReason: string): Promi
 
 export async function createPMTask(payload: TaskCreateRequest): Promise<TaskCreateResponse> {
   const { data } = await apiClient.post<TaskCreateResponse>('/tasks', payload)
+  return data
+}
+
+// ---- Marketplace Integration ----
+
+export async function getMarketplaceCatalogForProject(category?: string): Promise<MarketplaceAgent[]> {
+  const params = category ? { category } : {}
+  const { data } = await apiClient.get<MarketplaceAgent[]>('/marketplace/catalog', { params })
+  return data
+}
+
+export async function addMarketplaceAgentToProject(
+  projectId: string,
+  agentId: string,
+): Promise<ProjectAllowedAgent> {
+  // The backend now accepts both owned agents and marketplace agents
+  const { data } = await apiClient.post<ProjectAllowedAgent>(
+    `/projects/${projectId}/allowlist/${agentId}`,
+  )
   return data
 }

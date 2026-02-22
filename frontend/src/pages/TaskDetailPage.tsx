@@ -1,5 +1,8 @@
+import { useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, Link } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { StatusBadge } from '@/components/shared/StatusBadge'
@@ -14,7 +17,8 @@ import {
   usePlans,
   useTaskReasoningLogs,
 } from '@/hooks/use-api'
-import type { SubtaskDetail, TaskReasoningLog } from '@/lib/types'
+import { updateTaskStatus, startTask } from '@/lib/api'
+import { TaskStatus, type SubtaskDetail, type TaskReasoningLog } from '@/lib/types'
 
 const statusColors: Record<string, string> = {
   pending: 'bg-slate-100 text-slate-700',
@@ -77,9 +81,7 @@ function SubtaskCard({ subtask }: { subtask: SubtaskDetail }) {
           <div className="mt-3 pt-3 border-t border-slate-100">
             <p className="text-xs text-slate-500 mb-1">Draft preview:</p>
             <p className="text-xs text-slate-600 line-clamp-2 bg-slate-50 p-2 rounded">
-              {typeof subtask.draft_content === 'string' 
-                ? subtask.draft_content.slice(0, 150) + '...'
-                : 'Draft available'}
+              {'Draft available'}
             </p>
           </div>
         )}
@@ -129,6 +131,9 @@ function ReasoningLogRow({ log }: { log: TaskReasoningLog }) {
 
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const queryClient = useQueryClient()
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  
   const { data: task, isLoading: taskLoading } = useTask(id!)
   const { data: subtasks, isLoading: subtasksLoading } = useSubtasks(id!)
   const { data: risks } = useRiskSignals(id)
@@ -140,6 +145,69 @@ export default function TaskDetailPage() {
     streamWarning,
     streamState,
   } = useTaskReasoningLogs(id!)
+
+  // Get project ID from the first plan (if available)
+  const projectId = plans && plans.length > 0 ? plans[0].project_id : undefined
+
+  // Status update mutation
+  const statusMutation = useMutation({
+    mutationFn: ({ status, agentId }: { status: string; agentId?: string }) =>
+      updateTaskStatus(id!, status, agentId),
+    onSuccess: () => {
+      setStatusMessage({ type: 'success', text: 'Task status updated successfully' })
+      void queryClient.invalidateQueries({ queryKey: ['task', id] })
+      setTimeout(() => setStatusMessage(null), 3000)
+    },
+    onError: (error: Error) => {
+      setStatusMessage({ type: 'error', text: error.message || 'Failed to update status' })
+    },
+  })
+
+  // Start task mutation
+  const startMutation = useMutation({
+    mutationFn: (projectId: string) => startTask(id!, projectId),
+    onSuccess: (result) => {
+      if (result.error) {
+        setStatusMessage({ type: 'error', text: result.error })
+      } else {
+        setStatusMessage({ type: 'success', text: 'Task started and sent to orchestrator' })
+      }
+      void queryClient.invalidateQueries({ queryKey: ['task', id] })
+    },
+    onError: (error: Error) => {
+      setStatusMessage({ type: 'error', text: error.message || 'Failed to start task' })
+    },
+  })
+
+  // Get available status transitions based on current status
+  const getAvailableTransitions = (currentStatus: string) => {
+    const transitions: Record<string, { status: string; label: string; variant: 'default' | 'outline' | 'destructive' }[]> = {
+      [TaskStatus.PENDING]: [
+        { status: TaskStatus.IN_PROGRESS, label: 'Start', variant: 'default' },
+        { status: TaskStatus.CANCELLED, label: 'Cancel', variant: 'destructive' },
+      ],
+      [TaskStatus.ASSIGNED]: [
+        { status: TaskStatus.IN_PROGRESS, label: 'Start', variant: 'default' },
+        { status: TaskStatus.CANCELLED, label: 'Cancel', variant: 'destructive' },
+      ],
+      [TaskStatus.IN_PROGRESS]: [
+        { status: TaskStatus.COMPLETED, label: 'Complete', variant: 'default' },
+        { status: TaskStatus.FAILED, label: 'Mark Failed', variant: 'outline' },
+        { status: TaskStatus.CANCELLED, label: 'Cancel', variant: 'destructive' },
+      ],
+      [TaskStatus.COMPLETED]: [
+        { status: TaskStatus.CANCELLED, label: 'Cancel', variant: 'destructive' },
+      ],
+      [TaskStatus.FAILED]: [
+        { status: TaskStatus.PENDING, label: 'Retry', variant: 'default' },
+        { status: TaskStatus.CANCELLED, label: 'Cancel', variant: 'destructive' },
+      ],
+      [TaskStatus.CANCELLED]: [
+        { status: TaskStatus.PENDING, label: 'Reopen', variant: 'default' },
+      ],
+    }
+    return transitions[currentStatus] || []
+  }
 
   if (taskLoading) {
     return (
@@ -175,9 +243,7 @@ export default function TaskDetailPage() {
       {/* Breadcrumb & Header */}
       <div className="border-b border-slate-200 pb-4">
         <div className="flex items-center gap-2 text-sm text-slate-500 mb-2">
-          <Link to="/dashboard" className="hover:text-slate-700">Dashboard</Link>
-          <span>/</span>
-          <Link to="/tasks" className="hover:text-slate-700">Tasks</Link>
+          <Link to="/projects" className="hover:text-slate-700">Projects</Link>
           <span>/</span>
           <span className="text-slate-900 truncate max-w-[200px]">{task.title}</span>
         </div>
@@ -216,8 +282,57 @@ export default function TaskDetailPage() {
               )}
             </div>
           </div>
-          <ContextPanel projectId="proj-1" currentTaskId={task.id} />
+          {projectId && <ContextPanel projectId={projectId} currentTaskId={task.id} />}
         </div>
+
+        {/* Status Action Buttons */}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {getAvailableTransitions(task.status).map((transition) => (
+            <Button
+              key={transition.status}
+              variant={transition.variant}
+              size="sm"
+              disabled={statusMutation.isPending || startMutation.isPending}
+              onClick={() => {
+                // For "Start" on pending/assigned tasks with a plan, use startTask to trigger orchestrator
+                if (
+                  transition.status === TaskStatus.IN_PROGRESS &&
+                  (task.status === TaskStatus.PENDING || task.status === TaskStatus.ASSIGNED) &&
+                  plans &&
+                  plans.length > 0
+                ) {
+                  const approvedPlan = plans.find((p) => p.status === 'approved')
+                  if (approvedPlan) {
+                    startMutation.mutate(approvedPlan.project_id)
+                    return
+                  }
+                }
+                statusMutation.mutate({ status: transition.status })
+              }}
+            >
+              {transition.label}
+            </Button>
+          ))}
+        </div>
+
+        {/* Status Message */}
+        {statusMessage && (
+          <div
+            className={`mt-3 rounded-md px-3 py-2 text-sm ${
+              statusMessage.type === 'success'
+                ? 'bg-green-50 text-green-700 border border-green-200'
+                : 'bg-red-50 text-red-700 border border-red-200'
+            }`}
+          >
+            {statusMessage.text}
+            <button
+              className="ml-2 text-current hover:opacity-70"
+              onClick={() => setStatusMessage(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Progress Bar */}

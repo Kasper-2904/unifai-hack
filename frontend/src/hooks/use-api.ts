@@ -163,10 +163,14 @@ export function usePlans(taskId?: string) {
   });
 }
 
-export function useProject(id: string) {
+export function useProject(id: string | undefined) {
   return useQuery({
     queryKey: ["project", id],
-    queryFn: () => getProject(id),
+    queryFn: async () => {
+      if (!id) return null;
+      const result = await getProject(id);
+      return result ?? null;  // Ensure we never return undefined
+    },
     enabled: !!id,
   });
 }

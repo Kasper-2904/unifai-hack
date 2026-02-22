@@ -228,6 +228,8 @@ export async function publishAgent(agentData: {
   inference_provider: string
   inference_endpoint: string
   inference_model: string
+  system_prompt?: string
+  skills?: string[]
 }): Promise<MarketplaceAgent> {
   const { data } = await apiClient.post<MarketplaceAgent>('/marketplace/publish', agentData)
   return data
@@ -267,6 +269,47 @@ export async function getTeamProjects(teamId: string): Promise<Project[]> {
 
 export async function getProjectTasks(projectId: string): Promise<Task[]> {
   const { data } = await apiClient.get<Task[]>(`/projects/${projectId}/tasks`)
+  return data
+}
+
+// ---- Task Status Updates ----
+
+export async function updateTaskStatus(
+  taskId: string,
+  status: string,
+  assignedAgentId?: string,
+): Promise<Task> {
+  const { data } = await apiClient.patch<Task>(`/tasks/${taskId}`, {
+    status,
+    assigned_agent_id: assignedAgentId,
+  })
+  return data
+}
+
+export async function updateTaskProgress(
+  taskId: string,
+  progress: number,
+  message?: string,
+): Promise<Task> {
+  const { data } = await apiClient.patch<Task>(`/tasks/${taskId}/progress`, {
+    progress,
+    message,
+  })
+  return data
+}
+
+export interface TaskStartResponse {
+  task_id: string
+  status: string
+  message: string
+  orchestration_result: Record<string, unknown> | null
+  error: string | null
+}
+
+export async function startTask(taskId: string, projectId: string): Promise<TaskStartResponse> {
+  const { data } = await apiClient.post<TaskStartResponse>(`/tasks/${taskId}/start`, {
+    project_id: projectId,
+  })
   return data
 }
 

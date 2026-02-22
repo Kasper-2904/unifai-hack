@@ -1,4 +1,6 @@
 import axios, { AxiosError } from 'axios'
+import type { InternalAxiosRequestConfig } from 'axios'
+import { authStorage } from '@/lib/authStorage'
 import type { ApiErrorResponse } from '@/types/auth'
 
 export const apiClient = axios.create({
@@ -7,6 +9,18 @@ export const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
 })
+
+// Add request interceptor to attach auth token on every request
+apiClient.interceptors.request.use(
+  (config: InternalAxiosRequestConfig) => {
+    const token = authStorage.getToken()
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => Promise.reject(error)
+)
 
 export function setAuthHeader(token: string | null): void {
   if (token) {
