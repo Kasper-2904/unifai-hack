@@ -804,7 +804,7 @@ async def seed_database():
         print(f"  - 1 Seller Profile")
         print(f"  - 2 Agent Subscriptions")
         print(f"  - 3 Project Allowed Agents")
-        print(f"  - 3 Risk Signals")
+        print(f"  - 5 Risk Signals")
         print(f"  - {len(audit_entries)} Audit Log Entries")
         print(f"  - {len(usage_entries)} Usage Records")
         print(f"  - 1 GitHub Context")

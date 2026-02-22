@@ -90,7 +90,7 @@ class TestGeneratePlan:
 
         with (
             patch("src.core.orchestrator.get_orchestrator", return_value=mock_orchestrator),
-            patch("src.services.paid_service.get_paid_service", return_value=mock_paid),
+            patch("src.api.plans.get_paid_service", return_value=mock_paid),
         ):
             result = await generate_plan(
                 plan_data=PlanGenerate(task_id=task.id, project_id=project.id),
@@ -140,7 +140,7 @@ class TestGeneratePlan:
 
         with (
             patch("src.core.orchestrator.get_orchestrator", return_value=mock_orchestrator),
-            patch("src.services.paid_service.get_paid_service", return_value=mock_paid),
+            patch("src.api.plans.get_paid_service", return_value=mock_paid),
         ):
             result = await generate_plan(
                 plan_data=PlanGenerate(task_id=task.id, project_id=project.id),
