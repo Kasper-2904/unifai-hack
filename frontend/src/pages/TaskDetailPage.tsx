@@ -10,12 +10,14 @@ import { ProgressBar } from '@/components/shared/ProgressBar'
 import { RiskIndicator } from '@/components/shared/RiskIndicator'
 import { DraftViewer } from '@/components/shared/DraftViewer'
 import { ContextPanel } from '@/components/shared/ContextPanel'
+import { TaskActivityFeed } from '@/components/shared/TaskActivityFeed'
 import {
   useTask,
   useSubtasks,
   useRiskSignals,
   usePlans,
   useTaskReasoningLogs,
+  useTaskLogs,
 } from '@/hooks/use-api'
 import { updateTaskStatus, startTask } from '@/lib/api'
 import { TaskStatus, type SubtaskDetail, type TaskReasoningLog } from '@/lib/types'
@@ -148,6 +150,9 @@ export default function TaskDetailPage() {
 
   // Get project ID from the first plan (if available)
   const projectId = plans && plans.length > 0 ? plans[0].project_id : undefined
+
+  // Task activity logs with polling
+  const { logs: taskLogs, isPolling } = useTaskLogs(id, task?.status)
 
   // Status update mutation
   const statusMutation = useMutation({
@@ -345,8 +350,11 @@ export default function TaskDetailPage() {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="subtasks" className="space-y-4">
+      <Tabs defaultValue="activity" className="space-y-4">
         <TabsList variant="jira">
+          <TabsTrigger value="activity">
+            Activity {isPolling && <span className="ml-1 w-2 h-2 bg-green-500 rounded-full inline-block animate-pulse" />}
+          </TabsTrigger>
           <TabsTrigger value="subtasks">
             Subtasks {subtasks ? `(${subtasks.length})` : ''}
           </TabsTrigger>
@@ -361,6 +369,11 @@ export default function TaskDetailPage() {
             Reasoning {reasoningLogs.length > 0 ? `(${reasoningLogs.length})` : ''}
           </TabsTrigger>
         </TabsList>
+
+        {/* Activity Tab */}
+        <TabsContent value="activity">
+          <TaskActivityFeed logs={taskLogs} isPolling={isPolling} maxHeight="500px" />
+        </TabsContent>
 
         {/* Subtasks Tab */}
         <TabsContent value="subtasks" className="space-y-6">

@@ -16,6 +16,7 @@ import type {
   TaskReasoningLogStreamEvent,
   SubtaskDetail,
   Task,
+  TaskLogsResponse,
   Team,
   TeamMember,
 } from '@/lib/types'
@@ -309,6 +310,19 @@ export interface TaskStartResponse {
 export async function startTask(taskId: string, projectId: string): Promise<TaskStartResponse> {
   const { data } = await apiClient.post<TaskStartResponse>(`/tasks/${taskId}/start`, {
     project_id: projectId,
+  })
+  return data
+}
+
+// ---- Task Logs (Real-time Activity) ----
+
+export async function getTaskLogs(
+  taskId: string,
+  afterSequence: number = 0,
+  limit: number = 50,
+): Promise<TaskLogsResponse> {
+  const { data } = await apiClient.get<TaskLogsResponse>(`/tasks/${taskId}/logs`, {
+    params: { after_sequence: afterSequence, limit },
   })
   return data
 }

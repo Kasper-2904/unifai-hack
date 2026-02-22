@@ -5,7 +5,7 @@
 // - useQuery takes a "key" (like a cache label) and a function to fetch data
 // - It returns { data, isLoading, error } that components can use
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getAgent,
@@ -19,12 +19,13 @@ import {
   getRiskSignals,
   getSubtasks,
   getTask,
+  getTaskLogs,
   getTasks,
   subscribeTaskReasoningLogs,
   getTeamMembers,
   publishAgent,
 } from "@/lib/api";
-import type { TaskReasoningLog, TaskReasoningLogStreamEvent } from "@/lib/types";
+import type { TaskLog, TaskReasoningLog, TaskReasoningLogStreamEvent } from "@/lib/types";
 
 export function useTasks() {
   return useQuery({ queryKey: ["tasks"], queryFn: getTasks });
@@ -226,4 +227,73 @@ export function usePublishAgent() {
       queryClient.invalidateQueries({ queryKey: ["marketplace"] });
     },
   });
+}
+
+/**
+ * Hook for polling task logs in real-time.
+ * Automatically polls when task is in progress.
+ */
+export function useTaskLogs(
+  taskId: string | undefined,
+  taskStatus: string | undefined,
+  pollInterval: number = 2000
+) {
+  const [logs, setLogs] = useState<TaskLog[]>([]);
+  const [isPolling, setIsPolling] = useState(false);
+  const lastSequenceRef = useRef(0);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const isTaskActive = taskStatus === "in_progress" || taskStatus === "assigned";
+
+  const fetchLogs = useCallback(async () => {
+    if (!taskId) return;
+
+    try {
+      const response = await getTaskLogs(taskId, lastSequenceRef.current);
+      if (response.logs.length > 0) {
+        setLogs((prev) => [...prev, ...response.logs]);
+        lastSequenceRef.current = response.last_sequence;
+      }
+    } catch (error) {
+      console.error("Failed to fetch task logs:", error);
+    }
+  }, [taskId]);
+
+  // Initial fetch
+  useEffect(() => {
+    if (taskId) {
+      lastSequenceRef.current = 0;
+      setLogs([]);
+      void fetchLogs();
+    }
+  }, [taskId, fetchLogs]);
+
+  // Start/stop polling based on task status
+  useEffect(() => {
+    if (isTaskActive && taskId) {
+      setIsPolling(true);
+      intervalRef.current = setInterval(() => {
+        void fetchLogs();
+      }, pollInterval);
+    } else {
+      setIsPolling(false);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [isTaskActive, taskId, pollInterval, fetchLogs]);
+
+  // Manual refresh function
+  const refresh = useCallback(() => {
+    void fetchLogs();
+  }, [fetchLogs]);
+
+  return { logs, isPolling, refresh };
 }
