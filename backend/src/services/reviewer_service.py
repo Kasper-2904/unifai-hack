@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.state import RiskSeverity, RiskSource
 from src.services.context_service import SharedContextService
-from src.services.llm_service import LLMService, get_llm_service
+from src.services.llm_service import LLMService, TokenUsage, get_llm_service
 from src.storage.models import GitHubContext, Plan, RiskSignal, Subtask, Task
 
 
@@ -68,7 +68,7 @@ class ReviewerService:
         user_message = self._build_review_prompt(task, subtasks, shared_ctx)
 
         try:
-            result = await self._llm.complete_json(
+            result, token_usage = await self._llm.complete_json(
                 system=system_prompt,
                 user_message=user_message,
             )
@@ -79,6 +79,7 @@ class ReviewerService:
                 "findings": [],
                 "summary": f"Reviewer LLM call failed: {e}",
                 "error": str(e),
+                "token_usage": TokenUsage(),
             }
 
         # Persist findings as RiskSignals
@@ -116,6 +117,7 @@ class ReviewerService:
             "findings": findings,
             "risks_created": risks_created,
             "summary": result.get("summary", ""),
+            "token_usage": token_usage,
         }
 
     # ---- Helpers ----

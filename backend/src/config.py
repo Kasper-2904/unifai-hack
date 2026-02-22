@@ -62,8 +62,21 @@ class Settings(BaseSettings):
     platform_commission_rate: float = 0.20
     free_tier_daily_limit: int = 10
 
+    # Token pricing (cost per million tokens, USD)
+    anthropic_input_cost_per_m: float = 3.0   # Sonnet input
+    anthropic_output_cost_per_m: float = 15.0  # Sonnet output
+
 
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
+
+
+def calculate_token_cost(input_tokens: int, output_tokens: int) -> float:
+    """Calculate USD cost from token counts using configured rates."""
+    settings = get_settings()
+    return (
+        input_tokens * settings.anthropic_input_cost_per_m
+        + output_tokens * settings.anthropic_output_cost_per_m
+    ) / 1_000_000

@@ -1,5 +1,6 @@
 """Risk routing endpoints."""
 
+import logging
 from datetime import datetime
 from typing import Annotated, Any
 from uuid import uuid4
@@ -19,6 +20,8 @@ from src.api.schemas import (
 from src.services.paid_service import get_paid_service
 from src.storage.database import get_db
 from src.storage.models import AuditLog, Project, RiskSignal, Task, User
+
+logger = logging.getLogger(__name__)
 
 risks_router = APIRouter(prefix="/risks", tags=["Risk Signals"])
 reviewer_router = APIRouter(prefix="/reviewer", tags=["Reviewer Agent"])
@@ -191,19 +194,24 @@ async def finalize_task_review(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    # Track usage
+    # Track usage with token data from reviewer
     try:
+        token_usage = result.get("token_usage")
         await paid_service.track_usage(
             db=db,
             team_id=effective_team_id,
             user_id=current_user.id,
             usage_type="reviewer_finalize",
             data={"task_id": task_id, "project_id": body.project_id},
+            input_tokens=token_usage.input_tokens if token_usage else 0,
+            output_tokens=token_usage.output_tokens if token_usage else 0,
+            model_name=token_usage.model if token_usage else None,
         )
     except Exception as e:
-        import logging
+        logger.warning("Usage tracking failed in reviewer: %s", e)
 
-        logging.getLogger(__name__).warning("Usage tracking failed in reviewer: %s", e)
+    # Remove internal token_usage before returning to client
+    result.pop("token_usage", None)
 
     await db.commit()
     return result

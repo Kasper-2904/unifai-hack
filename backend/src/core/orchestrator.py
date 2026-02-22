@@ -241,7 +241,7 @@ async def execute_skill(state: OrchestratorState) -> OrchestratorState:
         skill_inputs = _prepare_skill_inputs(skill_name, enriched_input)
 
         # Execute skill via inference service
-        result_text = await inference_service.execute_skill(
+        result_text, _token_usage = await inference_service.execute_skill(
             agent=agent,
             skill=skill_name,
             inputs=skill_inputs,
