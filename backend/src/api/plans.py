@@ -19,6 +19,7 @@ from src.api.schemas import (
     PlanSubmitForApproval,
 )
 from src.core.state import PlanStatus
+from src.services.task_scheduler import get_task_scheduler
 from src.services.paid_service import get_paid_service
 from src.storage.database import get_db
 from src.storage.models import AuditLog, Plan, Project, Task, User
@@ -165,6 +166,44 @@ async def approve_plan(
         new_state={"status": PlanStatus.APPROVED.value},
     )
     db.add(audit)
+
+    await db.commit()
+    await db.refresh(plan)
+
+    scheduler = get_task_scheduler()
+    try:
+        start_result = await scheduler.process_single_task(task_id=plan.task_id, project_id=plan.project_id)
+    except Exception as exc:
+        logger.exception(
+            "Plan %s approved but failed to trigger start signal for task %s: %s",
+            plan_id,
+            plan.task_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Plan approved but failed to start task execution.",
+        ) from exc
+
+    start_audit = AuditLog(
+        id=str(uuid4()),
+        user_id=current_user.id,
+        action="plan_start_signal_triggered",
+        resource_type="plan",
+        resource_id=plan_id,
+        details={
+            "task_id": plan.task_id,
+            "project_id": plan.project_id,
+            "execution_status": start_result.get("status"),
+            "execution_error": start_result.get("error"),
+        },
+        previous_state={"status": PlanStatus.PENDING_PM_APPROVAL.value},
+        new_state={
+            "status": PlanStatus.APPROVED.value,
+            "execution_status": start_result.get("status"),
+        },
+    )
+    db.add(start_audit)
 
     await db.commit()
     await db.refresh(plan)

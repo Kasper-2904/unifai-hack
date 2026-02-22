@@ -22,7 +22,7 @@ import {
   rejectPlan,
   removeProjectAllowedAgent,
 } from '@/lib/pmApi'
-import { TaskStatus, type MarketplaceAgent } from '@/lib/types'
+import { PlanStatus, TaskStatus, type MarketplaceAgent } from '@/lib/types'
 
 const taskColumns = [
   { status: TaskStatus.PENDING, label: 'Pending', color: 'bg-slate-100' },
@@ -84,6 +84,7 @@ export default function ProjectDetailPage() {
   const [newTaskType, setNewTaskType] = useState(taskTypeOptions[0].value)
   const [newTaskDescription, setNewTaskDescription] = useState('')
   const [taskCreateError, setTaskCreateError] = useState<string | null>(null)
+  const [approvingPlanId, setApprovingPlanId] = useState<string | null>(null)
   const projectId = id ?? ''
 
   const dashboardQuery = useQuery({
@@ -164,9 +165,20 @@ export default function ProjectDetailPage() {
 
   const approvePlanMutation = useMutation({
     mutationFn: (planId: string) => approvePlan(planId),
+    onMutate: (planId: string) => {
+      setApprovingPlanId(planId)
+      setActionMessage('Sending PM start signal...')
+    },
     onSuccess: () => {
-      setActionMessage(`Plan approved.`)
+      setActionMessage('Plan approved and task execution started.')
       void queryClient.invalidateQueries({ queryKey: ['pm-dashboard', projectId] })
+      void queryClient.invalidateQueries({ queryKey: ['project-tasks', projectId] })
+    },
+    onError: (error: unknown) => {
+      setActionMessage(toApiErrorMessage(error, 'Failed to approve and start task'))
+    },
+    onSettled: () => {
+      setApprovingPlanId(null)
     },
   })
 
@@ -217,6 +229,18 @@ export default function ProjectDetailPage() {
     () => (marketplaceQuery.data ?? []).filter((agent: MarketplaceAgent) => !allowedAgentIds.has(agent.agent_id)),
     [marketplaceQuery.data, allowedAgentIds],
   )
+
+  const latestPlanStatusByTask = useMemo(() => {
+    const map = new Map<string, string>()
+    ;[...(dashboardQuery.data?.recent_plans ?? []), ...(dashboardQuery.data?.pending_approvals ?? [])].forEach(
+      (plan) => {
+        if (!map.has(plan.task_id)) {
+          map.set(plan.task_id, plan.status)
+        }
+      },
+    )
+    return map
+  }, [dashboardQuery.data?.recent_plans, dashboardQuery.data?.pending_approvals])
 
   if (!projectId) {
     return <p className="text-sm text-red-600">Project ID is missing.</p>
@@ -308,7 +332,9 @@ export default function ProjectDetailPage() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Create Task</CardTitle>
-              <CardDescription>Create a new project task for PM workflow.</CardDescription>
+              <CardDescription>
+                Create a new project task. OA plan generation runs first, then waits for PM start signal.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <form
@@ -365,6 +391,9 @@ export default function ProjectDetailPage() {
                 <Button type="submit" disabled={createTaskMutation.isPending}>
                   {createTaskMutation.isPending ? 'Creating...' : 'Create Task'}
                 </Button>
+                <p className="text-xs text-slate-500">
+                  New project tasks appear as plan-pending until you approve and start them.
+                </p>
               </form>
             </CardContent>
           </Card>
@@ -427,7 +456,13 @@ export default function ProjectDetailPage() {
                               <ProgressBar value={task.progress} />
                               <div className="flex items-center justify-between text-xs text-slate-400">
                                 <span>{task.task_type}</span>
-                                {task.assigned_agent_id && (
+                                {task.status === TaskStatus.PENDING &&
+                                  latestPlanStatusByTask.get(task.id) === PlanStatus.PENDING_PM_APPROVAL && (
+                                  <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700">
+                                    Plan pending approval
+                                  </Badge>
+                                )}
+                                {task.assigned_agent_id && task.status !== TaskStatus.PENDING && (
                                   <Badge variant="outline" className="text-xs">
                                     Assigned
                                   </Badge>
@@ -534,7 +569,7 @@ export default function ProjectDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Pending Approvals</CardTitle>
-              <CardDescription>Plans waiting for your review.</CardDescription>
+              <CardDescription>Plans waiting for your approve/start signal.</CardDescription>
             </CardHeader>
             <CardContent>
               {dashboard.pending_approvals.length === 0 ? (
@@ -589,7 +624,9 @@ export default function ProjectDetailPage() {
                             onClick={() => approvePlanMutation.mutate(plan.id)}
                             disabled={approvePlanMutation.isPending}
                           >
-                            Approve
+                            {approvePlanMutation.isPending && approvingPlanId === plan.id
+                              ? 'Approving & Starting...'
+                              : 'Approve & Start'}
                           </Button>
                           <Button
                             size="sm"

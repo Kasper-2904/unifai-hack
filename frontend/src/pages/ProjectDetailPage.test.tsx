@@ -267,14 +267,106 @@ describe('ProjectDetailPage', () => {
     await user.click(screen.getByRole('tab', { name: 'Plans' }))
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Approve & Start' })).toBeInTheDocument()
     })
 
-    await user.click(screen.getByRole('button', { name: 'Approve' }))
+    await user.click(screen.getByRole('button', { name: 'Approve & Start' }))
 
     await waitFor(() => {
       expect(mockedApprovePlan).toHaveBeenCalledWith('plan-1')
     })
+  })
+
+  it('keeps approve button disabled while approval/start is in-flight', async () => {
+    const user = userEvent.setup()
+    mockedFetchPMDashboard.mockResolvedValue(
+      makeDashboard({
+        pending_approvals: [
+          {
+            id: 'plan-1',
+            task_id: 'task-1',
+            project_id: 'proj-1',
+            status: PlanStatus.PENDING_PM_APPROVAL,
+            plan_data: { summary: 'Wait for PM start' },
+            approved_by_id: null,
+            approved_at: null,
+            rejection_reason: null,
+            version: 1,
+            created_at: '2026-02-21T10:00:00Z',
+            updated_at: null,
+          },
+        ],
+      }),
+    )
+    mockedListOwnedAgents.mockResolvedValue([])
+    mockedApprovePlan.mockImplementation(() => new Promise(() => {}))
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Orchestrator MVP' })
+
+    await user.click(screen.getByRole('tab', { name: 'Plans' }))
+    await user.click(screen.getByRole('button', { name: 'Approve & Start' }))
+
+    expect(screen.getByRole('button', { name: 'Approving & Starting...' })).toBeDisabled()
+  })
+
+  it('shows approval/start error feedback while keeping task board usable', async () => {
+    const user = userEvent.setup()
+    mockedFetchPMDashboard.mockResolvedValue(
+      makeDashboard({
+        pending_approvals: [
+          {
+            id: 'plan-1',
+            task_id: 'task-1',
+            project_id: 'proj-1',
+            status: PlanStatus.PENDING_PM_APPROVAL,
+            plan_data: { summary: 'Needs PM start' },
+            approved_by_id: null,
+            approved_at: null,
+            rejection_reason: null,
+            version: 1,
+            created_at: '2026-02-21T10:00:00Z',
+            updated_at: null,
+          },
+        ],
+      }),
+    )
+    mockedListOwnedAgents.mockResolvedValue([])
+    mockedGetProjectTasks.mockResolvedValue([
+      {
+        id: 'task-1',
+        title: 'Plan-gated task',
+        description: null,
+        task_type: 'bug_fix',
+        status: 'pending',
+        progress: 0,
+        assigned_agent_id: null,
+        team_id: 'proj-1',
+        created_at: '2026-02-21T10:00:00Z',
+        started_at: null,
+        completed_at: null,
+      },
+    ])
+    const approvalError = new AxiosError('Failed to start')
+    approvalError.response = {
+      status: 500,
+      statusText: 'Server Error',
+      headers: {},
+      config: {} as never,
+      data: { detail: 'Could not start task right now. Please retry.' },
+    }
+    mockedApprovePlan.mockRejectedValue(approvalError)
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Orchestrator MVP' })
+
+    await user.click(screen.getByRole('tab', { name: 'Plans' }))
+    await user.click(screen.getByRole('button', { name: 'Approve & Start' }))
+
+    expect(await screen.findByText('Could not start task right now. Please retry.')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Tasks' }))
+    expect(await screen.findByText('Plan-gated task')).toBeInTheDocument()
   })
 
   it('submits reject flow with a reason', async () => {
@@ -348,6 +440,49 @@ describe('ProjectDetailPage', () => {
         project_id: 'proj-1',
       })
     })
+  })
+
+  it('shows plan-pending lifecycle badge for tasks waiting PM start signal', async () => {
+    mockedFetchPMDashboard.mockResolvedValue(
+      makeDashboard({
+        pending_approvals: [
+          {
+            id: 'plan-1',
+            task_id: 'task-1',
+            project_id: 'proj-1',
+            status: PlanStatus.PENDING_PM_APPROVAL,
+            plan_data: { summary: 'Plan before execution' },
+            approved_by_id: null,
+            approved_at: null,
+            rejection_reason: null,
+            version: 1,
+            created_at: '2026-02-21T10:00:00Z',
+            updated_at: null,
+          },
+        ],
+      }),
+    )
+    mockedListOwnedAgents.mockResolvedValue([])
+    mockedGetProjectTasks.mockResolvedValue([
+      {
+        id: 'task-1',
+        title: 'Plan-gated task',
+        description: null,
+        task_type: 'bug_fix',
+        status: 'pending',
+        progress: 0,
+        assigned_agent_id: null,
+        team_id: 'proj-1',
+        created_at: '2026-02-21T10:00:00Z',
+        started_at: null,
+        completed_at: null,
+      },
+    ])
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Orchestrator MVP' })
+
+    expect(await screen.findByText('Plan pending approval')).toBeInTheDocument()
   })
 
   it('shows success feedback and refreshes task board after PM task creation', async () => {

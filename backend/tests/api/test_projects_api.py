@@ -1,14 +1,17 @@
 """Tests for project API endpoints."""
 
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.auth import get_current_user
 from src.api.projects import (
+    start_task,
     create_task,
     create_project,
     get_project,
@@ -18,7 +21,7 @@ from src.api.projects import (
     add_project_allowed_agent,
     list_task_reasoning_logs,
 )
-from src.api.schemas import ProjectCreate, TaskCreate
+from src.api.schemas import ProjectCreate, TaskCreate, TaskStartRequest
 from src.core.state import AgentStatus, TaskStatus, PlanStatus, UserRole
 from src.main import create_app
 from src.storage.database import get_db
@@ -289,6 +292,36 @@ class TestProjects:
 
 
 class TestTaskCreation:
+    @pytest.fixture(autouse=True)
+    def _mock_orchestrator_generate_plan(self, monkeypatch: pytest.MonkeyPatch):
+        class _NoopEventBus:
+            async def publish(self, *args, **kwargs):  # noqa: ANN002, ANN003
+                return None
+
+        class _MockOrchestrator:
+            async def generate_plan(self, *args, **kwargs):  # noqa: ANN002, ANN003
+                task_id = kwargs["task_id"]
+                project_id = kwargs["project_id"]
+                db = kwargs["db"]
+                plan = Plan(
+                    id=str(uuid4()),
+                    task_id=task_id,
+                    project_id=project_id,
+                    status=PlanStatus.PENDING_PM_APPROVAL.value,
+                    plan_data={"steps": ["mocked-step"]},
+                )
+                db.add(plan)
+                return {"plan_id": plan.id, "status": PlanStatus.PENDING_PM_APPROVAL.value}
+
+        monkeypatch.setattr(
+            "src.core.orchestrator.get_orchestrator",
+            lambda: _MockOrchestrator(),
+        )
+        monkeypatch.setattr(
+            "src.api.projects.get_event_bus",
+            lambda: _NoopEventBus(),
+        )
+
     @pytest.mark.asyncio
     async def test_create_task_allows_project_owner_with_project_context(
         self, db_session: AsyncSession
@@ -311,6 +344,69 @@ class TestTaskCreation:
 
         assert task.title == "Create from PM flow"
         assert task.team_id == project.id
+
+    @pytest.mark.asyncio
+    async def test_create_task_generates_pending_plan_for_project_scope(
+        self, db_session: AsyncSession
+    ):
+        owner = await _make_user(db_session, "plan_owner", "plan_owner@test.com")
+        project = Project(id=str(uuid4()), name="Plan Project", owner_id=owner.id)
+        db_session.add(project)
+        await db_session.commit()
+
+        task = await create_task(
+            task_data=TaskCreate(
+                title="Plan-first task",
+                task_type="bug_fix",
+                project_id=project.id,
+            ),
+            current_user=owner,
+            db=db_session,
+        )
+
+        plan_result = await db_session.execute(select(Plan).where(Plan.task_id == task.id))
+        plan = plan_result.scalar_one_or_none()
+
+        assert plan is not None
+        assert plan.project_id == project.id
+        assert plan.status == PlanStatus.PENDING_PM_APPROVAL.value
+        assert task.status not in {TaskStatus.IN_PROGRESS, TaskStatus.COMPLETED}
+
+    @pytest.mark.asyncio
+    async def test_create_task_returns_500_when_plan_generation_fails(
+        self, db_session: AsyncSession
+    ):
+        owner = await _make_user(db_session, "fail_owner", "fail_owner@test.com")
+        project = Project(id=str(uuid4()), name="Fail Project", owner_id=owner.id)
+        db_session.add(project)
+        await db_session.commit()
+
+        class _FailingOrchestrator:
+            async def generate_plan(self, *args, **kwargs):  # noqa: ANN002, ANN003
+                raise RuntimeError("plan generation failed")
+
+        with patch(
+            "src.core.orchestrator.get_orchestrator",
+            return_value=_FailingOrchestrator(),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await create_task(
+                    task_data=TaskCreate(
+                        title="Task with failing plan generation",
+                        task_type="bug_fix",
+                        project_id=project.id,
+                    ),
+                    current_user=owner,
+                    db=db_session,
+                )
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Task creation failed while generating OA plan."
+
+        task_result = await db_session.execute(
+            select(Task).where(Task.title == "Task with failing plan generation")
+        )
+        assert task_result.scalar_one_or_none() is None
 
     @pytest.mark.asyncio
     async def test_create_task_allows_pm_member_with_project_context(
@@ -447,6 +543,40 @@ class TestTaskCreation:
 
         assert task.created_by_id == user.id
         assert task.team_id is None
+
+    @pytest.mark.asyncio
+    async def test_start_task_blocks_before_pm_start_signal(self, db_session: AsyncSession):
+        owner = await _make_user(db_session, "start_gate_owner", "start_gate_owner@test.com")
+        project = Project(id=str(uuid4()), name="Start Gate Project", owner_id=owner.id)
+        db_session.add(project)
+        await db_session.commit()
+
+        task = await create_task(
+            task_data=TaskCreate(
+                title="Blocked start task",
+                task_type="code_generation",
+                project_id=project.id,
+            ),
+            current_user=owner,
+            db=db_session,
+        )
+
+        with patch(
+            "src.services.agent_assignment.assign_agent_to_task",
+            new=AsyncMock(return_value={"assigned_agent_id": None}),
+        ) as assign_mock:
+            with pytest.raises(HTTPException) as exc_info:
+                await start_task(
+                    task_id=task.id,
+                    request=TaskStartRequest(project_id=project.id),
+                    background_tasks=BackgroundTasks(),
+                    current_user=owner,
+                    db=db_session,
+                )
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Task cannot start before PM approval/start signal."
+        assign_mock.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_create_task_is_discoverable_in_project_task_listing(

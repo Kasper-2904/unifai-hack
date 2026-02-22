@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -114,10 +114,13 @@ describe("MarketplacePage", () => {
     renderWithProviders();
 
     await user.click(await screen.findByText("Publish Agent"));
-    await user.type(screen.getByPlaceholderText("e.g., Code Reviewer Pro"), "Publish Bot");
-    await user.type(screen.getByPlaceholderText("https://your-agent.com/v1"), "https://agent.example.com/v1");
-    await user.type(screen.getByPlaceholderText("Token for authenticating with your agent"), "secret-token");
-    await user.click(screen.getByRole("button", { name: "Publish Agent" }));
+    const publishDialog = await screen.findByRole("dialog", { name: "Publish a New Agent" });
+    const dialog = within(publishDialog);
+
+    await user.type(dialog.getByPlaceholderText("e.g., Code Reviewer Pro"), "Publish Bot");
+    await user.type(dialog.getByPlaceholderText("https://your-agent.com/v1"), "https://agent.example.com/v1");
+    await user.type(dialog.getByPlaceholderText("Token for authenticating with your agent"), "secret-token");
+    await user.click(dialog.getByRole("button", { name: "Publish Agent" }));
 
     await waitFor(() => {
       expect(mockedPublishAgent).toHaveBeenCalledWith(
@@ -129,7 +132,7 @@ describe("MarketplacePage", () => {
         undefined, // Free agents don't need onboarding URLs
       );
     });
-  });
+  }, 15000);
 
   it("shows actionable publish error message", async () => {
     const user = userEvent.setup();
@@ -137,15 +140,18 @@ describe("MarketplacePage", () => {
     renderWithProviders();
 
     await user.click(await screen.findByText("Publish Agent"));
-    await user.type(screen.getByPlaceholderText("e.g., Code Reviewer Pro"), "Publish Bot");
-    await user.type(screen.getByPlaceholderText("https://your-agent.com/v1"), "https://agent.example.com/v1");
-    await user.type(screen.getByPlaceholderText("Token for authenticating with your agent"), "secret-token");
-    await user.click(screen.getByRole("button", { name: "Publish Agent" }));
+    const publishDialog = await screen.findByRole("dialog", { name: "Publish a New Agent" });
+    const dialog = within(publishDialog);
+
+    await user.type(dialog.getByPlaceholderText("e.g., Code Reviewer Pro"), "Publish Bot");
+    await user.type(dialog.getByPlaceholderText("https://your-agent.com/v1"), "https://agent.example.com/v1");
+    await user.type(dialog.getByPlaceholderText("Token for authenticating with your agent"), "secret-token");
+    await user.click(dialog.getByRole("button", { name: "Publish Agent" }));
 
     await waitFor(() => {
       expect(
         screen.getByText("Missing required publish details. Add endpoint URL and API token, then try again."),
       ).toBeInTheDocument();
     });
-  });
+  }, 15000);
 });

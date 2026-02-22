@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from datetime import datetime
 from typing import Annotated, Any
 from uuid import uuid4
@@ -48,6 +49,7 @@ from src.storage.models import (
 
 projects_router = APIRouter(prefix="/projects", tags=["Projects"])
 tasks_router = APIRouter(prefix="/tasks", tags=["Tasks"])
+logger = logging.getLogger(__name__)
 
 # ============== Project Routes ==============
 
@@ -304,6 +306,32 @@ async def create_task(
         task.assigned_at = datetime.utcnow()
 
     db.add(task)
+    await db.flush()
+
+    if project_scope_id:
+        from src.core.orchestrator import get_orchestrator
+
+        orchestrator = get_orchestrator()
+        try:
+            await orchestrator.generate_plan(
+                task_id=task.id,
+                task_title=task.title,
+                task_description=task.description or "",
+                project_id=project_scope_id,
+                db=db,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to auto-generate OA plan for project-scoped task %s: %s",
+                task.id,
+                exc,
+            )
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Task creation failed while generating OA plan.",
+            ) from exc
+
     await db.commit()
     await db.refresh(task)
 
@@ -321,6 +349,41 @@ async def create_task(
     )
 
     return task
+
+
+async def _get_project_scoped_plan_status(db: AsyncSession, task: Task) -> str | None:
+    """Return latest plan status for project-scoped tasks, otherwise None."""
+    if not task.team_id:
+        return None
+
+    project_result = await db.execute(select(Project.id).where(Project.id == task.team_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        return None
+
+    plan_result = await db.execute(
+        select(Plan.status)
+        .where(
+            Plan.task_id == task.id,
+            Plan.project_id == task.team_id,
+        )
+        .order_by(Plan.created_at.desc())
+        .limit(1)
+    )
+    return plan_result.scalar_one_or_none()
+
+
+async def _ensure_project_task_can_start(db: AsyncSession, task: Task) -> None:
+    """Enforce plan-first + PM approval gate before execution starts."""
+    latest_plan_status = await _get_project_scoped_plan_status(db=db, task=task)
+    if latest_plan_status is None:
+        return
+
+    if latest_plan_status != PlanStatus.APPROVED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task cannot start before PM approval/start signal.",
+        )
 
 
 @tasks_router.get("", response_model=list[TaskResponse])
@@ -753,6 +816,8 @@ async def start_task(
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
+    await _ensure_project_task_can_start(db=db, task=task)
+
     if task.status not in (TaskStatus.PENDING, TaskStatus.ASSIGNED):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -881,6 +946,8 @@ async def execute_task(
 
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    await _ensure_project_task_can_start(db=db, task=task)
 
     if task.status not in (TaskStatus.PENDING, TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS):
         raise HTTPException(
