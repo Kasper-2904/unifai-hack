@@ -5,6 +5,7 @@
 // - useQuery takes a "key" (like a cache label) and a function to fetch data
 // - It returns { data, isLoading, error } that components can use
 
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getAgent,
@@ -13,14 +14,17 @@ import {
   getMarketplaceCatalog,
   getPlans,
   getProject,
+  getTaskReasoningLogs,
   getReviewerFindings,
   getRiskSignals,
   getSubtasks,
   getTask,
   getTasks,
+  subscribeTaskReasoningLogs,
   getTeamMembers,
   publishAgent,
 } from "@/lib/api";
+import type { TaskReasoningLog, TaskReasoningLogStreamEvent } from "@/lib/types";
 
 export function useTasks() {
   return useQuery({ queryKey: ["tasks"], queryFn: getTasks });
@@ -32,6 +36,109 @@ export function useTask(id: string) {
     queryFn: () => getTask(id),
     enabled: !!id,
   });
+}
+
+function sortReasoningLogs(logs: TaskReasoningLog[]): TaskReasoningLog[] {
+  return [...logs].sort((a, b) => {
+    if (a.sequence !== b.sequence) {
+      return a.sequence - b.sequence;
+    }
+    if (a.created_at !== b.created_at) {
+      return a.created_at.localeCompare(b.created_at);
+    }
+    return a.id.localeCompare(b.id);
+  });
+}
+
+function upsertReasoningLog(
+  existing: TaskReasoningLog[],
+  incoming: TaskReasoningLog,
+): TaskReasoningLog[] {
+  const byId = new Map(existing.map((log) => [log.id, log]));
+  byId.set(incoming.id, incoming);
+  return sortReasoningLogs(Array.from(byId.values()));
+}
+
+export function useTaskReasoningLogs(taskId: string) {
+  const [liveLogs, setLiveLogs] = useState<TaskReasoningLog[]>([]);
+  const [streamState, setStreamState] = useState<"connecting" | "connected" | "disconnected">(
+    "connecting",
+  );
+  const [streamWarning, setStreamWarning] = useState<string | null>(null);
+
+  const historyQuery = useQuery({
+    queryKey: ["taskReasoningLogs", taskId],
+    queryFn: () => getTaskReasoningLogs(taskId),
+    enabled: Boolean(taskId),
+  });
+  const historyLogs = useMemo(
+    () => sortReasoningLogs(historyQuery.data ?? []),
+    [historyQuery.data],
+  );
+
+  useEffect(() => {
+    if (!taskId) {
+      return;
+    }
+
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let stopStream: (() => void) | null = null;
+    let attempts = 0;
+    let isDisposed = false;
+
+    const connect = () => {
+      if (isDisposed) return;
+      setStreamState("connecting");
+
+      stopStream = subscribeTaskReasoningLogs(taskId, {
+        onOpen: () => {
+          attempts = 0;
+          setStreamState("connected");
+          setStreamWarning(null);
+        },
+        onEvent: (event: TaskReasoningLogStreamEvent) => {
+          if (!event.log) return;
+          setLiveLogs((previous) => upsertReasoningLog(previous, event.log));
+        },
+        onError: () => {
+          if (isDisposed) return;
+          setStreamState("disconnected");
+          setStreamWarning("Live updates disconnected. Reconnecting...");
+          attempts += 1;
+          const retryDelayMs = Math.min(1000 * 2 ** Math.min(attempts, 4), 15000);
+          reconnectTimer = setTimeout(connect, retryDelayMs);
+        },
+      });
+    };
+
+    connect();
+
+    return () => {
+      isDisposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      stopStream?.();
+    };
+  }, [taskId]);
+
+  const mergedLogs = useMemo(() => {
+    const byId = new Map<string, TaskReasoningLog>();
+    for (const log of historyLogs) {
+      byId.set(log.id, log);
+    }
+    for (const log of liveLogs) {
+      byId.set(log.id, log);
+    }
+    return sortReasoningLogs(Array.from(byId.values()));
+  }, [historyLogs, liveLogs]);
+
+  return {
+    logs: mergedLogs,
+    isLoading: historyQuery.isLoading,
+    isError: historyQuery.isError,
+    error: historyQuery.error,
+    streamState,
+    streamWarning,
+  };
 }
 
 export function useSubtasks(taskId: string) {

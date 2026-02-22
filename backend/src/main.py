@@ -20,6 +20,7 @@ from src.api.billing import billing_router
 
 from src.config import get_settings
 from src.core.event_bus import get_event_bus
+from src.core.reasoning_logs import register_reasoning_log_handlers
 from src.storage.database import init_db
 
 health_router = APIRouter(tags=["Health"])
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Start event bus
     event_bus = get_event_bus()
+    register_reasoning_log_handlers(event_bus)
     await event_bus.start()
     print("Event bus started")
 

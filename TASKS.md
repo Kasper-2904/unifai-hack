@@ -175,8 +175,20 @@
   - Empty/error states are handled for missing reasoning entries.
 
 ### M5-T4 Real-Time OA Reasoning Logs in Frontend (owner: Marin)
-- Status: Todo
+- Status: In Progress
 - Description: Add real-time reasoning/action log updates in frontend task/detail views.
+- Notes: 2026-02-22 - Implementation prep completed with M5-T4-ST0 (branch + scoped subtask plan + agent prompt pack in `prompts/`).
+  2026-02-22 - Implemented ST1-ST5: persisted lifecycle logs, snapshot + SSE APIs with task-level auth, frontend stream hook, and Task Detail reasoning timeline UI with reconnect warning.
+- Subtasks:
+  - M5-T4-ST0 (owner: Marin) - Done - Prepare branch, subtasks, and agent prompts.
+  - M5-T4-ST1 (owner: Farhan) - Done - Persist orchestration event timeline for task/plan runs (task started/assigned/progress/completed/failed) in backend storage with stable event payload shape.
+  - M5-T4-ST2 (owner: Farhan) - Done - Add task reasoning log APIs for snapshot retrieval and real-time streaming (SSE) with auth + access checks.
+  - M5-T4-ST3 (owner: Martin) - Done - Add frontend reasoning-log API/types + streaming hook to consume incremental SSE updates and merge with initial history.
+  - M5-T4-ST4 (owner: Martin) - Done - Implement Task Detail reasoning log timeline UI (in-progress vs completed states, ordering, reconnect/error/empty states).
+  - M5-T4-ST5 (owner: Martin) - Done - Wire orchestration-triggered refresh behavior so live logs appear during active runs without manual page reload.
+  - M5-T4-ST6 (owner: Marin) - Done - Added backend API tests for reasoning-log snapshot ordering/shape, unauthorized access behavior, empty/unknown payload handling, SSE event formatting, and disconnect cleanup behavior.
+  - M5-T4-ST7 (owner: Marin) - Done - Expanded frontend Task Detail tests for initial reasoning timeline rendering, incremental stream updates with ordering, in-progress/completed state visibility, disconnect warning UX with history preservation, empty-state fallback, and stream/snapshot dedupe.
+  - M5-T4-ST8 (owner: Marin) - Todo - Review pass and quality gates (`cd backend && .venv/bin/pytest`, `cd frontend && npm run lint && npm run build && npm run test`).
 - Acceptance Criteria:
   - Reasoning/action logs stream incrementally during orchestration runs.
   - UI clearly distinguishes in-progress vs completed reasoning steps.

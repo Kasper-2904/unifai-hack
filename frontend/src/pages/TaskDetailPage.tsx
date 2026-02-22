@@ -7,8 +7,14 @@ import { ProgressBar } from '@/components/shared/ProgressBar'
 import { RiskIndicator } from '@/components/shared/RiskIndicator'
 import { DraftViewer } from '@/components/shared/DraftViewer'
 import { ContextPanel } from '@/components/shared/ContextPanel'
-import { useTask, useSubtasks, useRiskSignals, usePlans } from '@/hooks/use-api'
-import type { SubtaskDetail } from '@/lib/types'
+import {
+  useTask,
+  useSubtasks,
+  useRiskSignals,
+  usePlans,
+  useTaskReasoningLogs,
+} from '@/hooks/use-api'
+import type { SubtaskDetail, TaskReasoningLog } from '@/lib/types'
 
 const statusColors: Record<string, string> = {
   pending: 'bg-slate-100 text-slate-700',
@@ -82,12 +88,58 @@ function SubtaskCard({ subtask }: { subtask: SubtaskDetail }) {
   )
 }
 
+function getReasoningStatusBadgeClass(status: string): string {
+  if (status === 'completed' || status === 'completed_with_errors') {
+    return 'bg-emerald-100 text-emerald-700 border-emerald-200'
+  }
+  if (status === 'failed') {
+    return 'bg-red-100 text-red-700 border-red-200'
+  }
+  if (status === 'in_progress') {
+    return 'bg-amber-100 text-amber-700 border-amber-200'
+  }
+  return 'bg-slate-100 text-slate-700 border-slate-200'
+}
+
+function ReasoningLogRow({ log }: { log: TaskReasoningLog }) {
+  const statusClass = getReasoningStatusBadgeClass(log.status)
+  const isActive = log.status === 'in_progress'
+
+  return (
+    <div className="flex gap-3 rounded-md border border-slate-200 bg-white p-3">
+      <div className="pt-1">
+        <div className={`h-2.5 w-2.5 rounded-full ${isActive ? 'bg-amber-500 animate-pulse' : 'bg-slate-400'}`} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline" className={`text-[11px] ${statusClass}`}>
+            {log.status.replaceAll('_', ' ')}
+          </Badge>
+          <span className="text-xs text-slate-500">{log.event_type}</span>
+          <span className="text-xs text-slate-400">#{log.sequence}</span>
+          <span className="text-xs text-slate-400">
+            {new Date(log.created_at).toLocaleTimeString()}
+          </span>
+        </div>
+        <p className="mt-2 text-sm text-slate-700">{log.message}</p>
+      </div>
+    </div>
+  )
+}
+
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { data: task, isLoading: taskLoading } = useTask(id!)
   const { data: subtasks, isLoading: subtasksLoading } = useSubtasks(id!)
   const { data: risks } = useRiskSignals(id)
   const { data: plans } = usePlans(id)
+  const {
+    logs: reasoningLogs,
+    isLoading: reasoningLoading,
+    isError: reasoningError,
+    streamWarning,
+    streamState,
+  } = useTaskReasoningLogs(id!)
 
   if (taskLoading) {
     return (
@@ -189,6 +241,9 @@ export default function TaskDetailPage() {
           </TabsTrigger>
           <TabsTrigger value="risks">
             Risks {risks && risks.length > 0 ? `(${risks.length})` : ''}
+          </TabsTrigger>
+          <TabsTrigger value="reasoning">
+            Reasoning {reasoningLogs.length > 0 ? `(${reasoningLogs.length})` : ''}
           </TabsTrigger>
         </TabsList>
 
@@ -392,6 +447,48 @@ export default function TaskDetailPage() {
                 <p className="text-xs text-slate-400">Risk signals will appear here if any are identified.</p>
               </CardContent>
             </Card>
+          )}
+        </TabsContent>
+
+        {/* Reasoning Tab */}
+        <TabsContent value="reasoning" className="space-y-3">
+          {streamWarning && (
+            <Card>
+              <CardContent className="py-3">
+                <p className="text-xs text-amber-700">
+                  {streamWarning} Current stream state: {streamState}.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {reasoningLoading ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-slate-500">
+                Loading reasoning timeline...
+              </CardContent>
+            </Card>
+          ) : reasoningError ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-red-600">
+                Could not load reasoning logs.
+              </CardContent>
+            </Card>
+          ) : reasoningLogs.length === 0 ? (
+            <Card>
+              <CardContent className="py-10 text-center">
+                <p className="text-sm text-slate-600">No reasoning logs yet</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Logs will appear here when task orchestration starts.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {reasoningLogs.map((log) => (
+                <ReasoningLogRow key={log.id} log={log} />
+              ))}
+            </div>
           )}
         </TabsContent>
       </Tabs>

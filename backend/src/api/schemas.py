@@ -236,6 +236,30 @@ class TaskProgress(BaseModel):
     message: str | None = None
 
 
+class TaskReasoningLogResponse(BaseModel):
+    """Schema for persisted task reasoning log entries."""
+
+    id: str
+    task_id: str
+    subtask_id: str | None
+    event_type: str
+    message: str
+    status: str
+    sequence: int
+    payload: dict[str, Any]
+    source: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TaskReasoningLogStreamEvent(BaseModel):
+    """Schema for server-sent reasoning stream events."""
+
+    event: str
+    log: TaskReasoningLogResponse
+
+
 # ============== MCP Communication Schemas ==============
 
 

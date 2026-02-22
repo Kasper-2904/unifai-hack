@@ -12,10 +12,11 @@ from src.api.projects import (
     list_project_tasks,
     list_project_allowed_agents,
     add_project_allowed_agent,
+    list_task_reasoning_logs,
 )
 from src.api.schemas import ProjectCreate
 from src.core.state import AgentStatus, TaskStatus, PlanStatus
-from src.storage.models import Agent, Plan, Project, Task, TeamMember, User
+from src.storage.models import Agent, Plan, Project, Task, TaskReasoningLog, TeamMember, User
 
 
 async def _make_user(db: AsyncSession, username: str, email: str) -> User:
@@ -44,6 +45,20 @@ async def _make_agent(db: AsyncSession, owner: User) -> Agent:
     db.add(agent)
     await db.flush()
     return agent
+
+
+async def _make_task(db: AsyncSession, owner: User, team_id: str | None = None) -> Task:
+    task = Task(
+        id=str(uuid4()),
+        title="Reasoning Task",
+        task_type="code_generation",
+        status=TaskStatus.PENDING,
+        created_by_id=owner.id,
+        team_id=team_id,
+    )
+    db.add(task)
+    await db.flush()
+    return task
 
 
 class TestProjects:
@@ -193,3 +208,56 @@ class TestProjectAllowlist:
         )
 
         assert len(agents) == 1
+
+
+class TestTaskReasoningLogs:
+    @pytest.mark.asyncio
+    async def test_list_reasoning_logs_orders_by_sequence(self, db_session: AsyncSession):
+        owner = await _make_user(db_session, "log_owner", "log_owner@test.com")
+        task = await _make_task(db_session, owner)
+        await db_session.flush()
+
+        db_session.add_all(
+            [
+                TaskReasoningLog(
+                    id=str(uuid4()),
+                    task_id=task.id,
+                    event_type="task.started",
+                    message="Started",
+                    status="in_progress",
+                    sequence=2,
+                    payload={},
+                    source="orchestrator",
+                ),
+                TaskReasoningLog(
+                    id=str(uuid4()),
+                    task_id=task.id,
+                    event_type="task.assigned",
+                    message="Assigned",
+                    status="in_progress",
+                    sequence=1,
+                    payload={},
+                    source="orchestrator",
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        logs = await list_task_reasoning_logs(task_id=task.id, current_user=owner, db=db_session)
+
+        assert len(logs) == 2
+        assert [log.sequence for log in logs] == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_list_reasoning_logs_denies_other_user(self, db_session: AsyncSession):
+        owner = await _make_user(db_session, "owner_u", "owner_u@test.com")
+        outsider = await _make_user(db_session, "outsider_u", "outsider_u@test.com")
+        task = await _make_task(db_session, owner)
+        await db_session.commit()
+
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_task_reasoning_logs(task_id=task.id, current_user=outsider, db=db_session)
+
+        assert exc_info.value.status_code == 404

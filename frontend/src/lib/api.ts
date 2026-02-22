@@ -4,6 +4,7 @@
 // =============================================================
 
 import { apiClient } from '@/lib/apiClient'
+import { authStorage } from '@/lib/authStorage'
 import type {
   Agent,
   DeveloperDashboard,
@@ -11,6 +12,8 @@ import type {
   Plan,
   Project,
   RiskSignal,
+  TaskReasoningLog,
+  TaskReasoningLogStreamEvent,
   SubtaskDetail,
   Task,
   Team,
@@ -30,6 +33,108 @@ export async function getTask(id: string): Promise<Task | null> {
     return data
   } catch {
     return null
+  }
+}
+
+export async function getTaskReasoningLogs(taskId: string): Promise<TaskReasoningLog[]> {
+  const { data } = await apiClient.get<TaskReasoningLog[]>(`/tasks/${taskId}/reasoning-logs`)
+  return data
+}
+
+interface ReasoningLogStreamCallbacks {
+  onOpen?: () => void
+  onEvent: (event: TaskReasoningLogStreamEvent) => void
+  onError?: (error: Error) => void
+  onClose?: () => void
+}
+
+function parseSseFrame(frame: string): { event: string; data: string } | null {
+  const lines = frame.split('\n')
+  let eventName = 'message'
+  const dataLines: string[] = []
+
+  for (const line of lines) {
+    if (!line || line.startsWith(':')) continue
+    if (line.startsWith('event:')) {
+      eventName = line.slice(6).trim()
+      continue
+    }
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trim())
+    }
+  }
+
+  if (dataLines.length === 0) {
+    return null
+  }
+
+  return { event: eventName, data: dataLines.join('\n') }
+}
+
+export function subscribeTaskReasoningLogs(
+  taskId: string,
+  callbacks: ReasoningLogStreamCallbacks,
+): () => void {
+  const abortController = new AbortController()
+
+  const run = async () => {
+    try {
+      const token = authStorage.getToken()
+      const headers: HeadersInit = {
+        Accept: 'text/event-stream',
+      }
+      if (token) {
+        headers.Authorization = `Bearer ${token}`
+      }
+
+      const response = await fetch(`/api/v1/tasks/${taskId}/reasoning-logs/stream`, {
+        headers,
+        signal: abortController.signal,
+      })
+
+      if (!response.ok || !response.body) {
+        throw new Error(`Reasoning stream request failed (${response.status})`)
+      }
+
+      callbacks.onOpen?.()
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        let boundary = buffer.indexOf('\n\n')
+        while (boundary !== -1) {
+          const frame = buffer.slice(0, boundary)
+          buffer = buffer.slice(boundary + 2)
+          const parsed = parseSseFrame(frame)
+          if (parsed) {
+            const parsedData = JSON.parse(parsed.data) as TaskReasoningLogStreamEvent
+            callbacks.onEvent(parsedData)
+          }
+          boundary = buffer.indexOf('\n\n')
+        }
+      }
+
+      callbacks.onClose?.()
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        return
+      }
+      callbacks.onError?.(
+        error instanceof Error ? error : new Error('Unknown reasoning stream error'),
+      )
+    }
+  }
+
+  void run()
+
+  return () => {
+    abortController.abort()
   }
 }
 
