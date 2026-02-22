@@ -1,5 +1,6 @@
 """API-level tests for PM dashboard and project allowlist flows (M2-T4)."""
 
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -252,10 +253,19 @@ async def test_pm_plan_approval_success_requires_owner_and_creates_audit_log(
     assert exc.value.status_code == 404
     assert exc.value.detail == "Project not found"
 
-    approved = await approve_plan(plan.id, current_user=owner, db=db_session)
+    scheduler = AsyncMock()
+    scheduler.process_single_task = AsyncMock(return_value={"status": "completed", "error": None})
+
+    with patch("src.api.plans.get_task_scheduler", return_value=scheduler):
+        approved = await approve_plan(plan.id, current_user=owner, db=db_session)
+
     assert approved.status == PlanStatus.APPROVED.value
     assert approved.approved_by_id == owner.id
     assert approved.approved_at is not None
+    scheduler.process_single_task.assert_awaited_once_with(
+        task_id=task.id,
+        project_id=project.id,
+    )
 
     audit_result = await db_session.execute(
         select(AuditLog).where(
@@ -267,6 +277,16 @@ async def test_pm_plan_approval_success_requires_owner_and_creates_audit_log(
     assert audit.user_id == owner.id
     assert audit.previous_state == {"status": PlanStatus.PENDING_PM_APPROVAL.value}
     assert audit.new_state == {"status": PlanStatus.APPROVED.value}
+
+    start_audit_result = await db_session.execute(
+        select(AuditLog).where(
+            AuditLog.resource_id == plan.id,
+            AuditLog.action == "plan_start_signal_triggered",
+        )
+    )
+    start_audit = start_audit_result.scalar_one()
+    assert start_audit.details["task_id"] == task.id
+    assert start_audit.details["execution_status"] == "completed"
 
 
 async def test_pm_plan_approval_rejects_wrong_status_and_missing_plan(db_session: AsyncSession):
@@ -285,6 +305,27 @@ async def test_pm_plan_approval_rejects_wrong_status_and_missing_plan(db_session
         await approve_plan(approved_plan.id, current_user=owner, db=db_session)
     assert status_exc.value.status_code == 400
     assert status_exc.value.detail == "Plan must be in pending_pm_approval status to be approved"
+
+
+async def test_pm_plan_approval_returns_stable_500_when_start_signal_fails(
+    db_session: AsyncSession,
+):
+    owner = _make_user(db_session, "owner")
+    project = await _make_project(db_session, owner.id)
+    await _add_pm_membership(db_session, user_id=owner.id, project_id=project.id)
+    task = await _make_task(db_session, owner.id)
+    plan = await _make_plan(db_session, project.id, task.id, PlanStatus.PENDING_PM_APPROVAL)
+
+    scheduler = AsyncMock()
+    scheduler.process_single_task = AsyncMock(side_effect=RuntimeError("scheduler unavailable"))
+
+    with patch("src.api.plans.get_task_scheduler", return_value=scheduler):
+        with pytest.raises(HTTPException) as exc:
+            await approve_plan(plan.id, current_user=owner, db=db_session)
+
+    assert exc.value.status_code == 500
+    assert exc.value.detail == "Plan approved but failed to start task execution."
+    scheduler.process_single_task.assert_awaited_once_with(task_id=task.id, project_id=project.id)
 
 
 async def test_pm_plan_reject_success_requires_owner_and_creates_audit_log(

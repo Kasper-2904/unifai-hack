@@ -249,8 +249,20 @@
   - Canonical shared context markdown files are populated from latest sync data.
 
 ### M5-T11 OA Must Wait for PM Start Signal Before Execution (owner: Marin)
-- Status: Todo
+- Status: In Progress
 - Description: Ensure new tasks first generate an OA implementation plan, then pause for PM approval/start signal before any implementation agents begin execution.
+- Notes: 2026-02-22 - Implementation prep completed with M5-T11-ST0 (single branch setup + scoped subtask plan + agent prompt pack in `prompts/`).
+- Notes: 2026-02-22 - Implemented ST1-ST4: project-scoped `POST /tasks` now auto-generates/persists OA plan in `pending_pm_approval`, project-scoped start/execute endpoints are approval-gated, `POST /plans/{id}/approve` now acts as deterministic PM start signal by triggering scheduler execution with audit trail, and PM dashboard UX now communicates "Approve & Start" semantics with lifecycle rendering for plan-pending tasks.
+- Notes: 2026-02-22 - Implemented ST5-ST6 test coverage updates for plan-first creation + start gating and PM approve/start UX/error states (`backend/tests/api/test_projects_api.py`, `backend/tests/api/test_pm_dashboard.py`, `frontend/src/pages/ProjectDetailPage.test.tsx`).
+- Subtasks:
+  - M5-T11-ST0 (owner: Marin) - Done - Prepare branch, subtasks, and agent prompts.
+  - M5-T11-ST1 (owner: Farhan) - Done - Added backend `task.created` orchestration trigger that generates and persists an OA plan artifact (`pending_pm_approval`) immediately after task creation for project-scoped tasks, without starting implementation execution.
+  - M5-T11-ST2 (owner: Farhan) - Done - Hardened PM start-signal transition so PM approval (`POST /plans/{id}/approve`) deterministically starts assignment/execution flow and updates task lifecycle state/events without requiring manual task start calls.
+  - M5-T11-ST3 (owner: Martin) - Done - Updated PM frontend plan workflow to reflect start-signal semantics (clear approval/start action copy, loading/error UX, and task board refresh after start-triggering approval).
+  - M5-T11-ST4 (owner: Martin) - Done - Updated task/plan client wiring and PM dashboard interactions so newly created tasks show plan-pending state first, and execution-visible states only appear after PM start approval.
+  - M5-T11-ST5 (owner: Marin) - Done - Added backend tests for task-created -> plan-generated flow, no-execution-before-approval guarantee, approve/start transition behavior, and deterministic start-signal failure contract.
+  - M5-T11-ST6 (owner: Marin) - Done - Added frontend tests for PM start-signal UX, plan-first task lifecycle rendering, in-flight approval disable states, and approval failure feedback while task board remains usable.
+  - M5-T11-ST7 (owner: Marin) - In Progress - Review pass and quality gates (`cd backend && .venv/bin/pytest`, `cd frontend && npm run lint && npm run build && npm run test`); frontend lint/build pass, frontend full suite currently blocked by existing unrelated marketplace test timeout, backend suite blocked in this sandbox by async SQLite test execution hang.
 - Acceptance Criteria:
   - Creating a new task triggers OA planning first and stores a plan artifact before execution starts.
   - No implementation agent execution begins until PM provides explicit approval/start signal.
