@@ -48,6 +48,12 @@ Monorepo architecture with a web app, Python API, shared context store, OA plann
 8. Reviewer findings update shared context and project memory.
 9. Billing layer records seat usage (Stripe) and agent usage (Paid.ai).
 
+## Task Reasoning Log Flow (M5-T4)
+- Orchestrator publishes lifecycle events (`task.started`, `task.assigned`, `task.progress`, `task.completed`, `task.failed`) on the in-memory event bus.
+- Backend subscribes to lifecycle events and persists each event into `task_reasoning_logs` with deterministic per-task `sequence`.
+- Task detail UI loads snapshot history first, then opens authenticated SSE stream for incremental updates.
+- Stream disconnects are non-fatal; frontend keeps last snapshot and retries connection.
+
 ## Current Implementation Notes
 - Backend currently exposes implemented routers for:
   - auth/users/teams/agents/tasks
@@ -77,6 +83,8 @@ Monorepo architecture with a web app, Python API, shared context store, OA plann
 ## API Surface (MVP)
 - `POST /api/v1/tasks`
 - `GET /api/v1/tasks/{id}`
+- `GET /api/v1/tasks/{id}/reasoning-logs`
+- `GET /api/v1/tasks/{id}/reasoning-logs/stream`
 - `POST /api/v1/plans/generate`
 - `POST /api/v1/plans/{id}/approve`
 - `POST /api/v1/plans/{id}/reject`

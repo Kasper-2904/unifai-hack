@@ -1,10 +1,13 @@
 """Project and Task routing endpoints."""
 
+import asyncio
+import json
 from datetime import datetime
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,12 +19,14 @@ from src.api.schemas import (
     ProjectResponse,
     TaskCreate,
     TaskDetail,
+    TaskReasoningLogResponse,
     TaskResponse,
 )
+from src.core.reasoning_logs import get_reasoning_stream_hub
 from src.core.event_bus import Event, EventType, get_event_bus
 from src.core.state import TaskStatus
 from src.storage.database import get_db
-from src.storage.models import Agent, Project, ProjectAllowedAgent, Task, TeamMember, User
+from src.storage.models import Agent, Project, ProjectAllowedAgent, Task, TaskReasoningLog, User
 
 projects_router = APIRouter(prefix="/projects", tags=["Projects"])
 tasks_router = APIRouter(prefix="/tasks", tags=["Tasks"])
@@ -303,9 +308,13 @@ async def get_task(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Task:
     """Get task details including input/output."""
+    return await _get_task_with_access(task_id=task_id, current_user=current_user, db=db)
+
+
+async def _get_task_with_access(task_id: str, current_user: User, db: AsyncSession) -> Task:
+    """Return task if visible to user, else raise 404."""
     from src.storage.models import TeamMember, Project
 
-    # Get task first
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
 
@@ -335,4 +344,63 @@ async def get_task(
 
     return task
 
-    return task
+
+@tasks_router.get("/{task_id}/reasoning-logs", response_model=list[TaskReasoningLogResponse])
+async def list_task_reasoning_logs(
+    task_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[TaskReasoningLog]:
+    """Get persisted reasoning log timeline for a task."""
+    await _get_task_with_access(task_id=task_id, current_user=current_user, db=db)
+
+    result = await db.execute(
+        select(TaskReasoningLog)
+        .where(TaskReasoningLog.task_id == task_id)
+        .order_by(
+            TaskReasoningLog.sequence.asc(),
+            TaskReasoningLog.created_at.asc(),
+            TaskReasoningLog.id.asc(),
+        )
+    )
+    return list(result.scalars().all())
+
+
+@tasks_router.get("/{task_id}/reasoning-logs/stream")
+async def stream_task_reasoning_logs(
+    task_id: str,
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> StreamingResponse:
+    """SSE stream for live reasoning log updates for a task."""
+    await _get_task_with_access(task_id=task_id, current_user=current_user, db=db)
+    stream_hub = get_reasoning_stream_hub()
+    queue = await stream_hub.subscribe(task_id)
+
+    async def event_stream():
+        try:
+            yield ": connected\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    event_payload = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    event_name = event_payload.get("event", "reasoning_log.created")
+                    data = json.dumps(event_payload, default=str)
+                    yield f"event: {event_name}\ndata: {data}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            await stream_hub.unsubscribe(task_id, queue)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

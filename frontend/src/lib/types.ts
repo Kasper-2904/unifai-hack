@@ -174,6 +174,33 @@ export interface TaskDetail extends Task {
   metadata: Record<string, unknown>;
 }
 
+export const ReasoningLogStatus = {
+  IN_PROGRESS: "in_progress",
+  COMPLETED: "completed",
+  COMPLETED_WITH_ERRORS: "completed_with_errors",
+  FAILED: "failed",
+  INFO: "info",
+} as const;
+export type ReasoningLogStatus = (typeof ReasoningLogStatus)[keyof typeof ReasoningLogStatus];
+
+export interface TaskReasoningLog {
+  id: string;
+  task_id: string;
+  subtask_id: string | null;
+  event_type: string;
+  message: string;
+  status: ReasoningLogStatus | string;
+  sequence: number;
+  payload: Record<string, unknown>;
+  source: string | null;
+  created_at: string;
+}
+
+export interface TaskReasoningLogStreamEvent {
+  event: string;
+  log: TaskReasoningLog;
+}
+
 export interface Subtask {
   id: string;
   task_id: string;

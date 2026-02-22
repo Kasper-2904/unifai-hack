@@ -74,6 +74,8 @@ async def analyze_task(state: OrchestratorState) -> OrchestratorState:
             data={
                 "task_id": state.get("task_id"),
                 "task_type": task_type,
+                "message": "Task execution started",
+                "status": "in_progress",
             },
             source="orchestrator",
         )
@@ -170,12 +172,25 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
             selected = None
 
     if not selected:
+        failure_message = f"No agents available for skill: {required_skill}"
+        await event_bus.publish(
+            Event(
+                type=EventType.TASK_FAILED,
+                data={
+                    "task_id": state.get("task_id"),
+                    "subtask_id": state.get("subtask_id"),
+                    "message": failure_message,
+                    "status": "failed",
+                },
+                source="orchestrator",
+            )
+        )
         await event_bus.publish(
             Event(
                 type=EventType.SYSTEM_WARNING,
                 data={
                     "task_id": state.get("task_id"),
-                    "message": f"No agents available for skill: {required_skill}",
+                    "message": failure_message,
                 },
                 source="orchestrator",
             )
@@ -183,7 +198,7 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
         return {
             **state,
             "selected_agent_id": None,
-            "error": f"No agents available for skill: {required_skill}",
+            "error": failure_message,
             "status": "failed",
         }
 
@@ -194,6 +209,8 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
                 "task_id": state.get("task_id"),
                 "agent_id": selected.id,
                 "skill": required_skill,
+                "message": f"Assigned {required_skill} to agent {selected.id}",
+                "status": "in_progress",
             },
             source="orchestrator",
             target=selected.id,
@@ -218,9 +235,22 @@ async def execute_skill(state: OrchestratorState) -> OrchestratorState:
     input_data = state.get("input_data", {})
 
     if not agent_id or not skill_name:
+        message = "No agent or skill selected"
+        await event_bus.publish(
+            Event(
+                type=EventType.TASK_FAILED,
+                data={
+                    "task_id": state.get("task_id"),
+                    "subtask_id": state.get("subtask_id"),
+                    "message": message,
+                    "status": "failed",
+                },
+                source="orchestrator",
+            )
+        )
         return {
             **state,
-            "error": "No agent or skill selected",
+            "error": message,
             "status": "failed",
         }
 
@@ -230,9 +260,22 @@ async def execute_skill(state: OrchestratorState) -> OrchestratorState:
         agent = result.scalar_one_or_none()
 
         if not agent:
+            message = f"Agent {agent_id} not found"
+            await event_bus.publish(
+                Event(
+                    type=EventType.TASK_FAILED,
+                    data={
+                        "task_id": state.get("task_id"),
+                        "subtask_id": state.get("subtask_id"),
+                        "message": message,
+                        "status": "failed",
+                    },
+                    source="orchestrator",
+                )
+            )
             return {
                 **state,
-                "error": f"Agent {agent_id} not found",
+                "error": message,
                 "status": "failed",
             }
 
@@ -275,7 +318,8 @@ async def execute_skill(state: OrchestratorState) -> OrchestratorState:
                 "task_id": state.get("task_id"),
                 "step": current_step + 1,
                 "total_steps": len(plan),
-                "result": result_text,
+                "summary": f"Completed step {current_step + 1} of {len(plan)} ({skill_name})",
+                "status": "in_progress",
             },
             source="orchestrator",
         )
@@ -318,6 +362,7 @@ async def aggregate_results(state: OrchestratorState) -> OrchestratorState:
                 "status": status,
                 "step_count": len(step_results),
                 "handoff_required": True,
+                "message": "Task execution completed",
             },
             source="orchestrator",
         )

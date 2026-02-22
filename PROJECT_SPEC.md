@@ -116,6 +116,7 @@ The platform maintains structured shared context in explicit markdown documents:
 ### FR-8 Developer Dashboard
 - Task list + sub-actions per task.
 - Detail panel: task goal, assigned agents, progress, errors, risks.
+- Task detail includes persisted OA reasoning timeline with live incremental updates.
 - Visual risk/progress graph per task.
 - Big context mode: other project tasks, who/which agent works on what, project description, timeline.
 - Agent Marketplace access: browse available agents and view agent capabilities/pricing before PM selection.
@@ -147,6 +148,12 @@ The platform maintains structured shared context in explicit markdown documents:
 - Explainability: OA/Reviewer recommendations include rationale.
 - Security: role-based access (`pm`, `developer`, `admin`), audit logs for approvals/reviewer decisions/billing actions.
 - Scalability (MVP): multi-member teams (>= 4 contributors) per project.
+
+## Reasoning Log API Contract (M5-T4)
+- `GET /api/v1/tasks/{task_id}/reasoning-logs` returns persisted lifecycle log entries in chronological order.
+- `GET /api/v1/tasks/{task_id}/reasoning-logs/stream` exposes SSE events for new entries (`event: reasoning_log.created`).
+- Log entry shape: `id`, `task_id`, optional `subtask_id`, `event_type`, `message`, `status`, `sequence`, `payload`, `source`, `created_at`.
+- Access policy mirrors `GET /api/v1/tasks/{task_id}` (creator, project owner, or project member).
 
 ## Acceptance Criteria
 - [ ] PM can submit task and approve/reject OA plan before execution.

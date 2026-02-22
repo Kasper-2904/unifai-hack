@@ -181,6 +181,39 @@ class Task(Base):
     subtasks: Mapped[list["Subtask"]] = relationship(
         "Subtask", back_populates="task", foreign_keys="Subtask.task_id"
     )
+    reasoning_logs: Mapped[list["TaskReasoningLog"]] = relationship(
+        "TaskReasoningLog",
+        back_populates="task",
+        cascade="all, delete-orphan",
+        foreign_keys="TaskReasoningLog.task_id",
+    )
+
+
+class TaskReasoningLog(Base):
+    """Persisted task reasoning and lifecycle logs for frontend timeline rendering."""
+
+    __tablename__ = "task_reasoning_logs"
+    __table_args__ = (
+        UniqueConstraint("task_id", "sequence", name="uq_task_reasoning_log_task_sequence"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("tasks.id"), index=True)
+    task: Mapped["Task"] = relationship("Task", back_populates="reasoning_logs")
+
+    subtask_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("subtasks.id"), nullable=True, index=True
+    )
+
+    event_type: Mapped[str] = mapped_column(String(100), index=True)
+    message: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(50), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    source: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Project(Base):
